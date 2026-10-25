@@ -157,3 +157,13 @@ if(BUILD_TESTING)
         set_tests_properties(fastdl_module PROPERTIES TIMEOUT 40)
     endif()
 endif()
+
+if(BUILD_TESTING)
+    add_executable(fastdl_test_log_writer
+        "${AUTHUM_DIR}/tests/log_writer.c"
+        "${AUTHUM_DIR}/src/authum/host/logs/writer.c")
+    target_compile_options(fastdl_test_log_writer PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    target_link_libraries(fastdl_test_log_writer PRIVATE fastdl_logic fastdl_test_host)
+    add_test(NAME fastdl_log_writer COMMAND fastdl_test_log_writer)
+    set_tests_properties(fastdl_log_writer PROPERTIES TIMEOUT 15)
+endif()

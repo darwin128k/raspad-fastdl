@@ -14,7 +14,7 @@ if not host.is_file():
     raise SystemExit('Build build-authum/authum.so first: FastDL 0.4 requires the updated host')
 shutil.copy2(host, source / 'addons/authum/authum.so')
 (source / 'FASTDL-UPGRADE.txt').write_text(
-    'FastDL 0.4 requires Authum 4.2 (shared HTTP/clock API, ABI 1.2).\n'
+    'FastDL 0.4 ships with Authum 4.2.1 (async disk logging, shared HTTP/clock API, ABI 1.2).\n'
     'Stop HLDS before replacing addons/authum/authum.so and '\
     'addons/authum/modules/fastdl/fastdl.so.\n'
     'Preserve your existing configs/fastdl.cfg and all other server configs.\n'

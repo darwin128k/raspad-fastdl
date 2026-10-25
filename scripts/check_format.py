@@ -23,13 +23,15 @@ files = list((root / 'src').rglob('*.c'))
 files += list((root / 'include').rglob('*.h'))
 files += list((root / 'tests').glob('*.c'))
 files += list((authum / 'src/authum/host/http').glob('*.[ch]'))
+files += list((authum / 'src/authum/host/logs').glob('*.[ch]'))
 for name in ['http', 'clock', 'thread']:
     files += [authum / f'include/authum/{name}.h', authum / f'src/authum/api/{name}.c']
 files += [authum / name for name in [
     'src/authum/host/http.h', 'src/authum/host/http_windows.c',
     'src/authum/host/clock.h', 'src/authum/host/clock.c',
     'src/authum/host/threads.h', 'src/authum/host/threads.c',
-    'tests/http.c', 'tests/threads.c']]
+    'tests/http.c', 'tests/threads.c', 'tests/logs.c', 'tests/log_writer.c',
+    'src/authum/host/logs.c', 'src/authum/host/logs.h']]
 subprocess.run([args.formatter, '--dry-run', '--Werror', '-style=file',
                 *map(str, sorted(set(files)))], check=True)
 print(f'Formatting OK: {len(set(files))} files')

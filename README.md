@@ -187,3 +187,23 @@ The reusable constructor and component map are documented in
 libc/OS boundary types remain native where required. Formatting follows
 .clang-format (Allman braces, no single-line control flow, 100-column limit).
 CI checks formatting with clang-format 18.1.8 and scripts/check_format.py.
+
+## Asynchronous Authum disk logging
+
+Authum 4.2.1 copies accepted file records into a fixed 1024-slot queue.
+One Authum-managed writer handles file creation, daily rotation, retention,
+writing, flushing and closing. Files flush every 100ms while the disk responds;
+errors flush when the worker handles them. Accepted records drain on normal
+shutdown. A crash can lose queued records and buffered output.
+
+The producer never waits for the disk or queue space. When full, the newest
+file record is dropped, and the writer reports the number lost in the host
+log. Memory is bounded: about 1.7MiB for records and at most 32 open buffered
+files. No disk logging implementation is linked into fastdl.so.
+
+Formatting, channel configuration and console mirroring still run on the game
+thread. Engine console callbacks cannot run on the file writer. Worker-side
+logging continues to use the existing capture/delivery mechanism; the channel
+registry is not a concurrent API. Journal routing and log format are unchanged.
+
+See [Authum logging internals](lib/authum/docs/logging.md) for lifecycle and checks.
