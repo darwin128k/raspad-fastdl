@@ -1,0 +1,164 @@
+# raspad-fastdl
+
+Linux GoldSrc FastDL for Authum (GameDLL host, no Metamod). The 32-bit module
+contains an HTTP server running in its own pthread inside HLDS. No helper
+executable or child process is needed. No compression or TLS. GET/HEAD, one request per connection.
+
+## Configuration
+
+No absolute paths or duplicate resource trees are required:
+
+```ini
+bind = 0.0.0.0
+port = 17015
+
+source = {game}
+# Additional optional trees, checked in order:
+# source = {data}/public
+# source = {game}/custom/resources
+
+allow_dirs = maps models sound sprites gfx overviews
+allow_extensions = bsp mdl wav mp3 spr tga bmp txt res wad
+```
+
+Repeat `source` for up to 16 resource trees. A request for `/maps/example.bsp`
+looks for `maps/example.bsp` inside each tree; the first available allowed file
+wins. Every configured source must exist and be readable, or startup fails.
+Comment out optional sources until their directories exist.
+
+Placeholders: `{game}` is the actual game directory supplied by Authum,
+`{module}` is this module directory, `{data}` is its data directory. Plain
+relative paths start from `{module}`. Paths with spaces work without quotes.
+Unknown placeholders fail startup. If source is omitted, `{game}` is used.
+The legacy `root` key is accepted only as the fallback when no source entries
+are given; empty root also means `{game}`. Source entries take precedence.
+
+`allow_dirs` controls the first URL directory and `allow_extensions` controls
+file extensions. `deny_prefixes` excludes full paths or directory subtrees.
+These rules apply to every source. Root-level files are WAD-only. No directory
+listings, uploads, executable extensions by default, hidden components, URL
+escapes or symlink traversal. Resource names must use ASCII letters, digits,
+underscore, hyphen, dots, dollar signs and slashes. Names and extensions are case-sensitive.
+Publication is trusted administration: do not expose private data through hard
+links or bind mounts, and keep the allowed trees restricted to game resources.
+
+## Layout and installation
+
+```text
+addons/authum/modules/fastdl/
+  fastdl.so
+  configs/fastdl.cfg
+  licenses/...
+```
+
+Add `fastdl` to Authum's module list. Configure the public URL in the game:
+
+```text
+sv_allowdownload 1
+sv_downloadurl "http://YOUR_PUBLIC_IP:17015/"
+```
+
+The shipped config binds loopback only. Change bind to a local server IPv4
+address or `0.0.0.0` before external use. The public URL can differ because
+of NAT. Open the TCP port in the firewall/provider. A busy port fails startup;
+no automatic port substitution occurs. Maintain map `.res` manifests as
+required by the game. Reload the module after configuration changes.
+
+When upgrading older versions, stop/unload the old module first, replace
+fastdl.so, and remove obsolete fastdl-http files from the module root/data.
+Keep your local config. Sources, placeholders and limits are unchanged.
+
+## Build and package
+
+```sh
+git submodule update --init --recursive
+# Debian/Ubuntu: gcc-multilib libc6-dev-i386 cmake ninja-build python3
+cmake -S . -B build-linux32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux32
+ctest --test-dir build-linux32 --output-on-failure
+cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
+python3 scripts/package.py
+```
+
+Authum and picohttpparser are pinned Git submodules. Upstream license notices
+are included in the install. fastdl.so is i386, including the HTTP code. The test driver is not installed
+or needed at runtime. `-DFASTDL_BUILD_MODULE=OFF` builds the HTTP core and
+its tests for the native architecture, without Authum.
+
+## Operations and verification
+
+The HTTP worker never calls engine or Authum APIs. Configuration, source
+handles and the listening socket are prepared before start returns; port/source
+errors therefore fail module startup immediately. Source paths are opened using
+directory handles: the module never changes the process working directory.
+
+Fixed maximum 256 clients, 8 KiB request buffers, 64 headers, per-IP connection
+and attempt budgets, header/idle timeouts, five-minute maximum lifetime, file
+size cap, and global response-byte bandwidth budget with up to 100 ms burst.
+Access logging is enabled by default (access_log=1). sendfile is used; cold disk I/O can delay the
+worker. Range requests receive a complete representation.
+
+Unload signals a private wake pipe and joins the worker before freeing state
+or unloading code. Clients, sources, pipe and listener are closed. No forced
+thread cancellation or unsafe unload timeout is used. Shutdown normally wakes
+immediately, but a slow/stalled filesystem operation can delay join. The worker
+shares HLDS memory: an HTTP memory bug can crash the game. No child-process
+sandbox or process-crash isolation is provided.
+
+cpu=-1 inherits affinity; a configured CPU index applies only to the HTTP
+thread, preserving game-thread affinity. The worker blocks SIGPIPE locally for
+sendfile; process signal handlers, cwd, resource limits and unrelated descriptors
+are left intact. No HTTP work runs in Authum's task worker. Disk/network remain
+shared with the game, and provider filtering is required for link-saturating
+DDoS. Compare actual game frame latency against Nginx before replacing it.
+
+Integration tests cover binary contents, HEAD, concurrency, ordered sources,
+all placeholders, security policy on fallback trees, traversal/symlinks,
+malformed requests, timeouts, occupied port, shutdown wakeup, bandwidth, per-IP
+limits, real i386 module loading, 20 start/stop cycles with active clients, descriptor/
+thread cleanup, and preservation of host cwd, signals, CPU affinity and limits. Sanitizers:
+
+```sh
+cmake -S . -B build-sanitize -G Ninja -DFASTDL_BUILD_MODULE=OFF -DFASTDL_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-sanitize
+ctest --test-dir build-sanitize --output-on-failure
+```
+
+These are local checks, not a security audit or live HLDS/Steam-client test.
+
+## Access log and a quick check
+
+Access records go through Authum at info level into
+`addons/authum/modules/fastdl/logs/YYYY-MM-DD.log`. Set
+`fastdl.log_level = info` in Authum's config if a stricter filter is configured.
+Console visibility is controlled separately by Authum's `log_console` setting.
+Existing FastDL configs also default to access_log=1; set access_log=0 to disable.
+
+Events: connect, request, complete, disconnect, timeout, shutdown, reject_limit.
+Every connection has an id, peer IP/port, method/path, response status, actual
+body bytes handed to the socket, source index (1-based, matching startup logs),
+and duration in milliseconds. HEAD transfers zero body bytes. A complete
+record means the server finished writing the HTTP response, not proof that a
+client stored the file. A status of zero means no HTTP response was prepared.
+The HTTP client provides an IP address, not a trustworthy SteamID or player name.
+
+A fixed 256-record single-producer/single-consumer queue separates the worker
+from Authum's logger. Normal flushing is limited to 8 lines/frame and 100
+lines/second. Excess records are dropped with a log_overflow summary so a flood
+cannot grow memory without bounds. Unload joins the worker and flushes up to
+257 final lines. Request strings are sanitized and truncated to prevent log
+injection. During a map load without frames, log flushing waits for frames or
+unload. No disk/host logging occurs in the HTTP worker.
+
+Use an existing resource (replace the map name) to verify a full response:
+
+```sh
+curl --fail -o /dev/null http://127.0.0.1:17015/maps/YOUR_MAP.bsp
+tail -f addons/authum/modules/fastdl/logs/$(date +%F).log
+```
+
+A request for a missing/disallowed resource returns 404; this still confirms
+HTTP is answering, but does not confirm the source/path configuration is correct.
+For remote reachability, repeat the request from another machine using the
+public address. A game client with all files already cached will not download
+those files and therefore will not produce HTTP requests for them.

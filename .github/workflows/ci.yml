@@ -1,0 +1,26 @@
+name: Linux
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib libc6-dev-i386 ninja-build
+      - name: Build and integration tests
+        run: |
+          cmake -S . -B build-linux32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-linux32 -j2
+          ctest --test-dir build-linux32 --output-on-failure
+          cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
+      - name: Sanitizers
+        run: |
+          cmake -S . -B build-sanitize -G Ninja -DFASTDL_BUILD_MODULE=OFF -DFASTDL_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-sanitize -j2
+          ctest --test-dir build-sanitize --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastdl-linux
+          path: dist/linux32/
