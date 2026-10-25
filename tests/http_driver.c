@@ -3,6 +3,7 @@
 #include <fastdl/http.h>
 #include <authum/host/threads.h>
 #include <authum/host/http.h>
+#include <authum/host/placeholders.h>
 #include <signal.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -94,7 +95,22 @@ main(int argc, char **argv)
     authum_http_owner_t http_owner;
     authum_http_service_t service;
     authum_http_host_init(&http_owner, &threads, &service);
-    fastdl_http_t *http = fastdl_http_start(&cfg, &service, module, game, error, sizeof error);
+    /* The same placeholder service the host binds: standard names of the
+     * module being served. */
+    char data_text[4096];
+    if (snprintf(data_text, sizeof data_text, "%s/data", module) >= (int)sizeof data_text)
+    {
+        return 1;
+    }
+    const authum_char_t *standard[authum_placeholder_standard_count] = {0};
+    standard[authum_placeholder_game] = game;
+    standard[authum_placeholder_module] = module;
+    standard[authum_placeholder_data] = data_text;
+    authum_placeholder_owner_t placeholder_owner;
+    authum_placeholder_service_t placeholder_service;
+    authum_placeholder_host_init(&placeholder_owner, standard, &placeholder_service);
+    fastdl_http_t *http =
+        fastdl_http_start(&cfg, &service, &placeholder_service, error, sizeof error);
     if (!http)
     {
         fprintf(stderr, "%s\n", error);
@@ -122,6 +138,7 @@ main(int argc, char **argv)
     fastdl_http_shutdown(http);
     fastdl_http_drain_logs(http, access_line, NULL, 257);
     fastdl_http_stop(http);
+    authum_placeholder_host_drop_owner(&placeholder_owner);
     authum_http_host_drop_owner(&http_owner);
     authum_threads_host_drop_owner(&owner);
     if (control >= 0)

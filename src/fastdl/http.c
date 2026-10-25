@@ -10,7 +10,7 @@ struct fastdl_http
 };
 
 static authum_bool_t
-build_options(const fastdl_config_t *config, const authum_char_t *module, const authum_char_t *game,
+build_options(const fastdl_config_t *config, const authum_placeholder_service_t *placeholders,
               authum_http_options_t *options, authum_char_t *error, authum_usize_t error_size)
 {
     authum_http_options_init(options);
@@ -32,25 +32,14 @@ build_options(const fastdl_config_t *config, const authum_char_t *module, const 
     for (authum_usize_t index = 0; index < config->source_count; ++index)
     {
         authum_char_t expanded[AUTHUM_HTTP_PATH_CAPACITY];
-        authum_char_t absolute[AUTHUM_HTTP_PATH_CAPACITY];
-        if (!fastdl_config_expand(config->sources[index], module, game, expanded, sizeof expanded))
+        if (!authum_placeholder_expand(placeholders, config->sources[index], expanded,
+                                       sizeof expanded))
         {
             snprintf(error, error_size, "source[%u]: unknown placeholder or path too long",
                      index + 1);
             return authum_bool_false;
         }
-        const authum_char_t *path = expanded;
-        if (*expanded != '/')
-        {
-            if (snprintf(absolute, sizeof absolute, "%s/%s", module, expanded) >=
-                (authum_i32_t)sizeof absolute)
-            {
-                snprintf(error, error_size, "source[%u]: absolute path too long", index + 1);
-                return authum_bool_false;
-            }
-            path = absolute;
-        }
-        if (!authum_http_source_add(options, path))
+        if (!authum_http_source_add(options, expanded))
         {
             snprintf(error, error_size, "source[%u]: invalid source path", index + 1);
             return authum_bool_false;
@@ -61,7 +50,7 @@ build_options(const fastdl_config_t *config, const authum_char_t *module, const 
 
 fastdl_http_t *
 fastdl_http_start(const fastdl_config_t *config, const authum_http_service_t *service,
-                  const authum_char_t *module, const authum_char_t *game, authum_char_t *error,
+                  const authum_placeholder_service_t *placeholders, authum_char_t *error,
                   authum_usize_t error_size)
 {
     if (!service || !service->ops || !AUTHUM_ABI_HAS(service->ops, open))
@@ -69,8 +58,13 @@ fastdl_http_start(const fastdl_config_t *config, const authum_http_service_t *se
         snprintf(error, error_size, "host has no HTTP service; update Authum");
         return NULL;
     }
+    if (!placeholders || !placeholders->ops || !AUTHUM_ABI_HAS(placeholders->ops, expand))
+    {
+        snprintf(error, error_size, "host has no placeholder service; update Authum");
+        return NULL;
+    }
     authum_http_options_t options;
-    if (!build_options(config, module, game, &options, error, error_size))
+    if (!build_options(config, placeholders, &options, error, error_size))
     {
         return NULL;
     }
@@ -91,21 +85,21 @@ fastdl_http_start(const fastdl_config_t *config, const authum_http_service_t *se
 }
 
 void
-fastdl_http_shutdown(fastdl_http_t *http)
-{
-    if (http)
-    {
-        authum_http_shutdown(&http->service, http->server);
-    }
-}
-
-void
 fastdl_http_stop(fastdl_http_t *http)
 {
     if (http)
     {
         authum_http_close(&http->service, http->server);
         free(http);
+    }
+}
+
+void
+fastdl_http_shutdown(fastdl_http_t *http)
+{
+    if (http)
+    {
+        authum_http_shutdown(&http->service, http->server);
     }
 }
 

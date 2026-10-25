@@ -4,6 +4,7 @@
 #include <authum/host/threads.h>
 #include <authum/host/http.h>
 #include <authum/host/clock.h>
+#include <authum/host/placeholders.h>
 #include <authum/env.h>
 #include <authum/path.h>
 #include <dlfcn.h>
@@ -116,7 +117,27 @@ main(int argc, char **argv)
     {
         return 1;
     }
-    authum_env_t env = {.size = sizeof env, .module = &path};
+    /* The host publishes the module's own folders; the test stands in for it.
+     * The standard layout is <game>/addons/authum/modules/<name>, so the
+     * game directory is four levels up. */
+    authum_path_t config_dir;
+    authum_path_t data_dir;
+    char game_text[4096];
+    if (snprintf(game_text, sizeof game_text, "%s/../../../..", argv[2]) >= (int)sizeof game_text)
+    {
+        return 1;
+    }
+    authum_path_t game_dir;
+    if (!authum_path_join(&config_dir, &path, "configs") ||
+        !authum_path_join(&data_dir, &path, "data") || !authum_path_set_cstr(&game_dir, game_text))
+    {
+        return 1;
+    }
+    authum_env_t env = {.size = sizeof env,
+                        .game = &game_dir,
+                        .module = &path,
+                        .module_config = &config_dir,
+                        .module_data = &data_dir};
     authum_events_ops_t event_ops = {
         .size = sizeof event_ops, .subscribe = subscribe, .unsubscribe = unsubscribe};
     authum_events_t events = {.ops = &event_ops};
@@ -127,13 +148,17 @@ main(int argc, char **argv)
     authum_threads_t thread_api;
     authum_http_owner_t http_owner;
     authum_http_service_t http_service;
+    authum_placeholder_owner_t placeholder_owner;
+    authum_placeholder_service_t placeholder_service;
+    authum_placeholder_host_init_env(&placeholder_owner, &env, &placeholder_service);
     authum_host_t host = {.size = sizeof host,
                           .env = &env,
                           .events = &events,
                           .logger = &logger,
                           .threads = &thread_api,
                           .http = &http_service,
-                          .clock = authum_clock_host()};
+                          .clock = authum_clock_host(),
+                          .placeholders = &placeholder_service};
     if (getenv("FASTDL_TEST_OLD_HOST"))
     {
         host.size = (authum_usize_t)((char *)&host.threads - (char *)&host);

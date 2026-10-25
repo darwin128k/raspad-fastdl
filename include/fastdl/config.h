@@ -27,7 +27,4 @@ fastdl_config_defaults(fastdl_config_t *c);
 authum_bool_t
 fastdl_config_load(fastdl_config_t *c, const authum_char_t *path, authum_char_t *error,
                    authum_usize_t size);
-authum_bool_t
-fastdl_config_expand(const authum_char_t *source, const authum_char_t *module,
-                     const authum_char_t *game, authum_char_t *out, authum_usize_t size);
 #endif

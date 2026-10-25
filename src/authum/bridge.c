@@ -65,61 +65,41 @@ fastdl_authum_start(authum_host_t *host)
     }
     authum_host_copy(&g_host, host);
     authum_logger_init(&g_log, &g_host);
-    const authum_path_t *module = authum_host_env_module(&g_host);
-    const authum_char_t *dir = module ? authum_path_as_cstr(module) : NULL;
-    authum_char_t base[4096], config[4096], error[512];
-    if (!dir || !realpath(dir, base))
+    const authum_placeholder_service_t *placeholders = authum_host_placeholders(&g_host);
+    if (!placeholders || !placeholders->ops || !AUTHUM_ABI_HAS(placeholders->ops, expand))
     {
-        authum_logger_error(&g_log, "cannot resolve module directory '%s': %s",
-                            dir ? dir : "(missing)", strerror(errno));
+        authum_logger_error(&g_log, "host has no placeholder service; update Authum");
         goto failed;
     }
-    if (snprintf(config, sizeof config, "%s/configs/fastdl.cfg", base) >=
-        (authum_i32_t)sizeof config)
+    const authum_path_t *config_dir = authum_host_env_module_config(&g_host);
+    authum_path_t config_path;
+    authum_char_t error[512];
+    if (!config_dir || !authum_path_join(&config_path, config_dir, "fastdl.cfg"))
     {
-        authum_logger_error(&g_log, "module path too long: '%s'", base);
-        goto failed;
-    }
-    authum_char_t game[4096], fallback[4096];
-    const authum_path_t *game_path = authum_host_env_game(&g_host);
-    const authum_char_t *game_dir = game_path ? authum_path_as_cstr(game_path) : NULL;
-    if (!game_dir)
-    {
-        if (snprintf(fallback, sizeof fallback, "%s/../../../..", base) >=
-            (authum_i32_t)sizeof fallback)
-        {
-            goto failed;
-        }
-        game_dir = fallback;
-    }
-    if (!realpath(game_dir, game))
-    {
-        authum_logger_error(&g_log, "cannot resolve game directory '%s': %s", game_dir,
-                            strerror(errno));
+        authum_logger_error(&g_log, "host provides no module config directory");
         goto failed;
     }
     fastdl_config_t cfg;
     fastdl_config_defaults(&cfg);
-    if (!fastdl_config_load(&cfg, config, error, sizeof error))
+    if (!fastdl_config_load(&cfg, authum_path_as_cstr(&config_path), error, sizeof error))
     {
         authum_logger_error(&g_log, "%s", error);
         goto failed;
     }
-    authum_logger_info(&g_log, "config='%s', game='%s', sources=%u, listen=%s:%d", config, game,
-                       cfg.source_count, cfg.bind, cfg.port);
+    authum_logger_info(&g_log, "config='%s', sources=%u, listen=%s:%d",
+                       authum_path_as_cstr(&config_path), cfg.source_count, cfg.bind, cfg.port);
     for (authum_usize_t i = 0; i < cfg.source_count; i++)
     {
-        authum_char_t expanded[4096];
-        if (!fastdl_config_expand(cfg.sources[i], base, game, expanded, sizeof expanded))
+        authum_char_t expanded[AUTHUM_HTTP_PATH_CAPACITY];
+        if (!authum_placeholder_expand(placeholders, cfg.sources[i], expanded, sizeof expanded))
         {
-            authum_logger_error(&g_log, "source[%u]='%s': invalid placeholder or path too long",
+            authum_logger_error(&g_log, "source[%u]='%s': unknown placeholder or path too long",
                                 i + 1, cfg.sources[i]);
             goto failed;
         }
-        authum_logger_info(&g_log, "source[%u]='%s' (relative paths use '%s')", i + 1, expanded,
-                           base);
+        authum_logger_info(&g_log, "source[%u]='%s'", i + 1, expanded);
     }
-    g_http = fastdl_http_start(&cfg, authum_host_http(&g_host), base, game, error, sizeof error);
+    g_http = fastdl_http_start(&cfg, authum_host_http(&g_host), placeholders, error, sizeof error);
     if (!g_http)
     {
         authum_logger_error(&g_log, "HTTP startup: %s", error);

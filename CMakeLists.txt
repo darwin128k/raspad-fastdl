@@ -15,7 +15,6 @@ find_package(Threads REQUIRED)
 # Production module: configuration, source adaptation and host API calls only.
 add_library(fastdl_logic STATIC
     src/fastdl/config.c
-    src/fastdl/sources.c
     src/fastdl/http.c
 )
 target_include_directories(fastdl_logic PUBLIC include "${AUTHUM_DIR}/include")
@@ -75,6 +74,7 @@ else()
         "${AUTHUM_DIR}/src/authum/api/thread.c"
         "${AUTHUM_DIR}/src/authum/api/http.c"
         "${AUTHUM_DIR}/src/authum/api/clock.c"
+        "${AUTHUM_DIR}/src/authum/api/placeholders.c"
     )
     target_include_directories(fastdl_test_client PUBLIC "${AUTHUM_DIR}/include")
     target_link_libraries(fastdl_logic PUBLIC fastdl_test_client)
@@ -107,6 +107,7 @@ if(BUILD_TESTING)
     add_library(fastdl_test_host STATIC
         "${AUTHUM_DIR}/src/authum/host/threads.c"
         "${AUTHUM_DIR}/src/authum/host/clock.c"
+        "${AUTHUM_DIR}/src/authum/host/placeholders.c"
         ${AUTHUM_HTTP_TEST_SOURCES}
         "${AUTHUM_DIR}/lib/picohttpparser/picohttpparser.c"
     )

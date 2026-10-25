@@ -26,12 +26,14 @@ looks for `maps/example.bsp` inside each tree; the first available allowed file
 wins. Every configured source must exist and be readable, or startup fails.
 Comment out optional sources until their directories exist.
 
-Placeholders: `{game}` is the actual game directory supplied by Authum,
-`{module}` is this module directory, `{data}` is its data directory. Plain
-relative paths start from `{module}`. Paths with spaces work without quotes.
-Unknown placeholders fail startup. If source is omitted, `{game}` is used.
-The legacy `root` key is accepted only as the fallback when no source entries
-are given; empty root also means `{game}`. Source entries take precedence.
+Placeholders come from Authum, not from this module: `{game}` is the actual
+game directory, `{module}` is this module directory, `{data}` is its data
+directory. Authum also publishes `{models}`, `{sprites}`, `{addons}`,
+`{authum}`, `{modules}`, `{config}` and `{lang}`. Plain relative paths start
+from `{module}`. Paths with spaces work without quotes. Unknown placeholders
+fail startup. If source is omitted, `{game}` is used. The legacy `root` key is
+accepted only as the fallback when no source entries are given; empty root
+also means `{game}`. Source entries take precedence.
 
 `allow_dirs` controls the first URL directory and `allow_extensions` controls
 file extensions. `deny_prefixes` excludes full paths or directory subtrees.
@@ -68,7 +70,8 @@ When upgrading older versions, stop/unload the old module first, replace
 fastdl.so, and remove obsolete fastdl-http files from the module root/data.
 Keep your local config. Sources, placeholders and limits are unchanged.
 
-FastDL 0.4 requires the shared HTTP/clock API in Authum 4.2 (ABI 1.2). Update
+FastDL 0.5 requires the shared HTTP/clock/placeholder API in Authum 4.3
+(ABI 1.3). Update
 `addons/authum/authum.so` together with fastdl.so while HLDS is stopped. Older
 modules remain ABI-compatible; this FastDL fails cleanly on older hosts.
 
@@ -177,9 +180,11 @@ those files and therefore will not produce HTTP requests for them.
 
 ## Readable components and API reuse
 
-The module config.c contains a declarative setting schema, sources.c expands
-placeholders, and http.c builds Authum HTTP options. The Authum bridge handles
-module lifecycle and game-thread log flushing. There is no socket, HTTP parser
+The module config.c contains a declarative setting schema, and http.c builds
+Authum HTTP options. Placeholder expansion belongs to Authum's placeholder
+service: the module asks it to resolve a source template and passes the
+resulting path to the HTTP service. The Authum bridge handles module lifecycle
+and game-thread log flushing. There is no socket, HTTP parser
 or OS clock implementation in FastDL.
 
 The reusable constructor and component map are documented in
