@@ -67,7 +67,7 @@ authum_bool_t fastdl_authum_start(authum_host_t *host) {
         }
         authum_logger_info(&g_log,"source[%u]='%s' (relative paths use '%s')",i+1,expanded,base);
     }
-    g_http=fastdl_http_start(&cfg,base,game,error,sizeof error);
+    g_http=fastdl_http_start(&cfg,authum_host_threads(&g_host),base,game,error,sizeof error);
     if(!g_http) { authum_logger_error(&g_log,"HTTP startup: %s",error); goto failed; }
     if(cfg.access_log) {
         if(!authum_host_subscribe(&g_host,AUTHUM_EVENT_SERVER_FRAME,access_frame,NULL)) {
@@ -75,7 +75,7 @@ authum_bool_t fastdl_authum_start(authum_host_t *host) {
         }
         g_log_subscribed=1; g_log_second=0; g_log_budget=100;
     }
-    authum_logger_info(&g_log,"ready %s:%d, HTTP worker thread (cpu=%d)",cfg.bind,cfg.port,cfg.cpu);
+    authum_logger_info(&g_log,"ready %s:%d, Authum worker (cpu=%d), clients=%d, buffers=%lu bytes",cfg.bind,cfg.port,cfg.cpu,cfg.max_clients,(unsigned long)fastdl_http_memory_usage(g_http));
     return authum_bool_true;
 failed:
     authum_logger_error(&g_log,"FastDL startup failed"); fastdl_authum_stop(); return authum_bool_false;

@@ -5,6 +5,7 @@ from pathlib import Path
 import signal
 import socket
 import struct
+import re
 import subprocess
 import sys
 import tempfile
@@ -178,7 +179,16 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
     proc.terminate(); proc.wait(timeout=3)
     overflow=log_text(proc).splitlines()
     assert any('event=log_overflow dropped=' in line for line in overflow)
-    assert len(overflow)<=257
+    assert len([line for line in overflow if line.startswith('http event=')])<=257
+    memory={}
+    for count in [1,64,256]:
+        proc,port,_,control=start(f'max_clients = {count}\n',control=True)
+        control.close(); proc.wait(timeout=3)
+        memory[count]=int(re.search(r'buffers_bytes=(\d+)',log_text(proc)).group(1))
+    stride=(memory[64]-memory[1])//63
+    assert stride>8192 and memory[64]-memory[1]==63*stride
+    assert memory[256]-memory[64]==192*stride
+    print(f'Client allocation: 64={memory[64]} bytes; 256={memory[256]} bytes; saved={memory[256]-memory[64]} bytes')
     bad=base/'bad.cfg'
     for setting in ['source = {unknown}\n','source = /nonexistent-fastdl-test-source\n','source =\n','source = {game}\n'*17]:
         bad.write_text(setting)

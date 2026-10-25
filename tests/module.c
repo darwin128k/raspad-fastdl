@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <authum/module/api.h>
 #include <fastdl/config.h>
+#include <authum/host/threads.h>
 #include <authum/env.h>
 #include <authum/path.h>
 #include <dlfcn.h>
@@ -56,7 +57,9 @@ int main(int argc,char **argv) {
     owning_thread=pthread_self();
     authum_logger_ops_t logger_ops={.size=sizeof logger_ops,.write=record_line};
     authum_logger_channel_t logger={.ops=&logger_ops};
-    authum_host_t host={.size=sizeof host,.env=&env,.events=&events,.logger=&logger};
+    authum_thread_owner_t owner; authum_threads_t thread_api;
+    authum_host_t host={.size=sizeof host,.env=&env,.events=&events,.logger=&logger,.threads=&thread_api};
+    if(getenv("FASTDL_TEST_OLD_HOST")) host.size=(authum_usize_t)((char *)&host.threads-(char *)&host);
     int expected=atoi(argv[3]);
     char cfg_path[4096],error[256],cwd[4096],after[4096];
     if(snprintf(cfg_path,sizeof cfg_path,"%s/configs/fastdl.cfg",argv[2])>=(int)sizeof cfg_path) return 1;
@@ -74,6 +77,7 @@ int main(int argc,char **argv) {
     if(!getcwd(cwd,sizeof cwd)) return 1;
     int fds=entries("/proc/self/fd"),threads=entries("/proc/self/task");
     for(int i=0;i<20;i++) {
+        authum_threads_host_init(&owner,&thread_api);
         int started=api->start(&host)!=0;
         if(started!=expected) { if(started) api->stop(); return 1; }
         int active[2]={-1,-1};
@@ -101,12 +105,15 @@ int main(int argc,char **argv) {
             }
             usleep(10000);
             if(frame) frame("authum.server.frame",NULL,frame_user);
-            api->stop(); /* Stop with both a slow header and an unread transfer. */
+            /* Match the real loader: host joins workers BEFORE module stop. */
+            authum_threads_host_stop_owner(&owner);
+            api->stop();
             if(frame) return 1;
             if(cfg.access_log && access_lines<=previous_lines) return 1;
             if(wrong_log_thread) return 1;
             for(int k=0;k<2;k++) close(active[k]);
         }
+        authum_threads_host_drop_owner(&owner);
         int status;
         if(waitpid(-1,&status,WNOHANG)!=-1 || errno!=ECHILD) return 1;
         if(entries("/proc/self/fd")!=fds || entries("/proc/self/task")!=threads) return 1;

@@ -15,6 +15,12 @@ jobs:
           cmake --build build-linux32 -j2
           ctest --test-dir build-linux32 --output-on-failure
           cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
+      - name: Updated Authum host and tests
+        run: |
+          cmake -S lib/authum -B build-authum -G Ninja -DCMAKE_BUILD_TYPE=Release -DAUTHUM_BUILD_EXAMPLES=OFF -DAUTHUM_BUILD_API_DOCS=OFF
+          cmake --build build-authum -j2
+          ctest --test-dir build-authum --output-on-failure
+          python3 scripts/package.py
       - name: Sanitizers
         run: |
           cmake -S . -B build-sanitize -G Ninja -DFASTDL_BUILD_MODULE=OFF -DFASTDL_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug

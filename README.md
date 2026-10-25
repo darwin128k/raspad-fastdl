@@ -1,7 +1,7 @@
 # raspad-fastdl
 
 Linux GoldSrc FastDL for Authum (GameDLL host, no Metamod). The 32-bit module
-contains an HTTP server running in its own pthread inside HLDS. No helper
+contains an HTTP server running on an Authum-managed thread inside HLDS. No helper
 executable or child process is needed. No compression or TLS. GET/HEAD, one request per connection.
 
 ## Configuration
@@ -68,6 +68,10 @@ When upgrading older versions, stop/unload the old module first, replace
 fastdl.so, and remove obsolete fastdl-http files from the module root/data.
 Keep your local config. Sources, placeholders and limits are unchanged.
 
+FastDL 0.3 requires the managed-thread API in Authum 4.1 (ABI 1.1). Update
+`addons/authum/authum.so` together with fastdl.so while HLDS is stopped. Older
+modules remain ABI-compatible; this FastDL fails cleanly on older hosts.
+
 ## Build and package
 
 ```sh
@@ -77,13 +81,16 @@ cmake -S . -B build-linux32 -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-linux32
 ctest --test-dir build-linux32 --output-on-failure
 cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
+# Also build the updated host (needed by FastDL 0.3):
+cmake -S lib/authum -B build-authum -G Ninja -DCMAKE_BUILD_TYPE=Release -DAUTHUM_BUILD_EXAMPLES=OFF -DAUTHUM_BUILD_API_DOCS=OFF
+cmake --build build-authum --target authum
 python3 scripts/package.py
 ```
 
 Authum and picohttpparser are pinned Git submodules. Upstream license notices
 are included in the install. fastdl.so is i386, including the HTTP code. The test driver is not installed
 or needed at runtime. `-DFASTDL_BUILD_MODULE=OFF` builds the HTTP core and
-its tests for the native architecture, without Authum.
+its tests for the native architecture with a test-only Authum thread host.
 
 ## Operations and verification
 
@@ -92,13 +99,16 @@ handles and the listening socket are prepared before start returns; port/source
 errors therefore fail module startup immediately. Source paths are opened using
 directory handles: the module never changes the process working directory.
 
-Fixed maximum 256 clients, 8 KiB request buffers, 64 headers, per-IP connection
+Up to 256 clients; buffers are allocated for the configured max_clients only
+(default 64: about 0.84 MiB of HTTP state, excluding thread stack, kernel buffers
+and allocator overhead, versus about 2.51 MiB at 256). 8 KiB request buffers, 64 headers, per-IP connection
 and attempt budgets, header/idle timeouts, five-minute maximum lifetime, file
 size cap, and global response-byte bandwidth budget with up to 100 ms burst.
 Access logging is enabled by default (access_log=1). sendfile is used; cold disk I/O can delay the
 worker. Range requests receive a complete representation.
 
-Unload signals a private wake pipe and joins the worker before freeing state
+Authum signals the worker through the registered wake callback and joins it
+before calling module stop. FastDL then frees its state
 or unloading code. Clients, sources, pipe and listener are closed. No forced
 thread cancellation or unsafe unload timeout is used. Shutdown normally wakes
 immediately, but a slow/stalled filesystem operation can delay join. The worker
@@ -106,7 +116,7 @@ shares HLDS memory: an HTTP memory bug can crash the game. No child-process
 sandbox or process-crash isolation is provided.
 
 cpu=-1 inherits affinity; a configured CPU index applies only to the HTTP
-thread, preserving game-thread affinity. The worker blocks SIGPIPE locally for
+thread, preserving game-thread affinity. Authum blocks SIGPIPE in the worker for
 sendfile; process signal handlers, cwd, resource limits and unrelated descriptors
 are left intact. No HTTP work runs in Authum's task worker. Disk/network remain
 shared with the game, and provider filtering is required for link-saturating

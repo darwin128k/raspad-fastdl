@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 /* Test-only process wrapper around the exact same worker used by fastdl.so. */
 #include <fastdl/http.h>
+#include <authum/host/threads.h>
 #include <signal.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -32,8 +33,11 @@ int main(int argc,char **argv) {
     fastdl_config_t cfg; fastdl_config_defaults(&cfg);
     if(!fastdl_config_load(&cfg,config,error,sizeof error)) { fprintf(stderr,"%s\n",error); return 1; }
     signal(SIGTERM,on_signal); signal(SIGINT,on_signal);
-    fastdl_http_t *http=fastdl_http_start(&cfg,module,game,error,sizeof error);
+    authum_thread_owner_t owner; authum_threads_t threads;
+    authum_threads_host_init(&owner,&threads);
+    fastdl_http_t *http=fastdl_http_start(&cfg,&threads,module,game,error,sizeof error);
     if(!http) { fprintf(stderr,"%s\n",error); return 1; }
+    fprintf(stderr,"buffers_bytes=%lu max_clients=%d\n",(unsigned long)fastdl_http_memory_usage(http),cfg.max_clients);
     if(control>=0 && send(control,"READY",5,MSG_NOSIGNAL)!=5) { fastdl_http_stop(http); return 1; }
     while(!stopped) {
         if(!getenv("FASTDL_TEST_HOLD_LOGS")) fastdl_http_drain_logs(http,access_line,NULL,16);
@@ -43,6 +47,7 @@ int main(int argc,char **argv) {
     fastdl_http_shutdown(http);
     fastdl_http_drain_logs(http,access_line,NULL,257);
     fastdl_http_stop(http);
+    authum_threads_host_drop_owner(&owner);
     if(control>=0) close(control);
     return 0;
 }

@@ -1,14 +1,11 @@
 #define _GNU_SOURCE
 #include <fastdl/http.h>
-#include <pthread.h>
 #include "picohttpparser.h"
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <poll.h>
-#include <sched.h>
-#include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -38,8 +35,9 @@ typedef struct peer { uint32_t ip; int used, active, count; int64_t window; } pe
 struct fastdl_http {
     fastdl_config_t config;
     int roots[16], listener, wake[2];
-    pthread_t thread;
-    client_t clients[256];
+    authum_threads_t threads;
+    authum_thread_t *thread;
+    client_t *clients;
     peer_t peers[1024];
     unsigned next_id;
     int joined;
@@ -47,6 +45,7 @@ struct fastdl_http {
     char logs[256][768];
 };
 static int64_t now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (int64_t)t.tv_sec*1000+t.tv_nsec/1000000; }
+static void http_wake(void *arg);
 static void log_client(fastdl_http_t *s,const client_t *c,const char *event) {
     if(!s->config.access_log) return;
     unsigned w=atomic_load_explicit(&s->log_write,memory_order_relaxed);
@@ -162,13 +161,9 @@ static int peer_slot(fastdl_http_t *s,uint32_t ip,int64_t now,const fastdl_confi
     if(free_slot<0) return -1;
     s->peers[free_slot]=(peer_t){.ip=ip,.used=1,.active=1,.count=1,.window=now}; return free_slot;
 }
-static void *http_run(void *arg) {
+static void http_run(void *arg) {
     fastdl_http_t *s=arg;
     const fastdl_config_t *cfg=&s->config;
-    /* sendfile has no MSG_NOSIGNAL. Block SIGPIPE only in this worker;
-     * never change the game's signal dispositions or signal mask. */
-    sigset_t blocked; sigemptyset(&blocked); sigaddset(&blocked,SIGPIPE);
-    pthread_sigmask(SIG_BLOCK,&blocked,NULL);
     int64_t last=now_ms(); double tokens=cfg->bytes_per_second/10.0;
     unsigned cursor=0;
     for(;;) {
@@ -232,16 +227,18 @@ static void *http_run(void *arg) {
         }
     }
     for(int i=0;i<cfg->max_clients;i++) { s->clients[i].close_reason="shutdown"; close_client(s,&s->clients[i]); }
-    return NULL;
+    return;
 }
 
 static void http_release(fastdl_http_t *s) {
     for(unsigned i=0;i<16;i++) if(s->roots[i]>=0) close(s->roots[i]);
     if(s->listener>=0) close(s->listener);
     for(unsigned i=0;i<2;i++) if(s->wake[i]>=0) close(s->wake[i]);
+    free(s->clients);
     free(s);
 }
 fastdl_http_t *fastdl_http_start(const fastdl_config_t *config,
+                               const authum_threads_t *threads,
                                const char *module_dir,const char *game_dir,
                                char *error,unsigned error_size) {
     fastdl_http_t *s=calloc(1,sizeof *s);
@@ -249,10 +246,16 @@ fastdl_http_t *fastdl_http_start(const fastdl_config_t *config,
     s->config=*config; s->listener=s->wake[0]=s->wake[1]=-1;
     atomic_init(&s->log_read,0); atomic_init(&s->log_write,0); atomic_init(&s->log_dropped,0);
     for(unsigned i=0;i<16;i++) s->roots[i]=-1;
-    for(unsigned i=0;i<256;i++) s->clients[i].fd=s->clients[i].file=-1;
-    if(!config->source_count || config->source_count>16 || config->max_clients<1 || config->max_clients>256 || config->cpu < -1 || config->cpu>=CPU_SETSIZE) {
+    if(!config->source_count || config->source_count>16 || config->max_clients<1 || config->max_clients>256 || config->cpu < -1 || config->cpu>=1024) {
         snprintf(error,error_size,"invalid HTTP configuration bounds"); goto failed;
     }
+    if(!threads || !threads->ops || !AUTHUM_ABI_HAS(threads->ops,start) || !AUTHUM_ABI_HAS(threads->ops,stop)) {
+        snprintf(error,error_size,"host has no managed-thread API; update Authum"); goto failed;
+    }
+    s->threads=*threads;
+    s->clients=calloc((size_t)config->max_clients,sizeof *s->clients);
+    if(!s->clients) { snprintf(error,error_size,"client buffer allocation failed"); goto failed; }
+    for(int i=0;i<config->max_clients;i++) s->clients[i].fd=s->clients[i].file=-1;
     int module=open(module_dir,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     if(module<0) { snprintf(error,error_size,"cannot open module directory '%.150s': %s",module_dir,strerror(errno)); goto failed; }
     for(unsigned i=0;i<config->source_count;i++) {
@@ -273,26 +276,26 @@ fastdl_http_t *fastdl_http_start(const fastdl_config_t *config,
     if(bind(s->listener,(struct sockaddr *)&addr,sizeof addr)||listen(s->listener,64)) {
         snprintf(error,error_size,"cannot listen on %s:%d: %s",config->bind,config->port,strerror(errno)); goto failed;
     }
-    pthread_attr_t attr; int rc=pthread_attr_init(&attr);
-    if(rc) { snprintf(error,error_size,"HTTP thread attributes: %s",strerror(rc)); goto failed; }
-    if(config->cpu>=0) {
-        cpu_set_t cpus; CPU_ZERO(&cpus); CPU_SET(config->cpu,&cpus);
-        rc=pthread_attr_setaffinity_np(&attr,sizeof cpus,&cpus);
-    }
-    if(!rc) rc=pthread_create(&s->thread,&attr,http_run,s);
-    pthread_attr_destroy(&attr);
-    if(rc) { snprintf(error,error_size,"cannot create HTTP thread (cpu=%d): %s",config->cpu,strerror(rc)); goto failed; }
+    s->thread=authum_thread_start(&s->threads,http_run,http_wake,s,config->cpu,
+                                  AUTHUM_THREAD_BLOCK_SIGPIPE,error,error_size);
+    if(!s->thread) goto failed;
     return s;
 failed:
     http_release(s); return NULL;
 }
-void fastdl_http_shutdown(fastdl_http_t *s) {
-    if(!s || s->joined) return;
+static void http_wake(void *arg) {
+    fastdl_http_t *s=arg;
     /* Read end stays open until after join, even if the worker exited early. */
     ssize_t n;
     do { n=write(s->wake[1],"x",1); } while(n<0 && errno==EINTR);
-    pthread_join(s->thread,NULL);
+}
+void fastdl_http_shutdown(fastdl_http_t *s) {
+    if(!s || s->joined) return;
+    authum_thread_stop(&s->threads,s->thread); s->thread=NULL;
     s->joined=1;
+}
+authum_usize_t fastdl_http_memory_usage(const fastdl_http_t *s) {
+    return s ? sizeof *s+(authum_usize_t)s->config.max_clients*sizeof *s->clients : 0;
 }
 unsigned fastdl_http_drain_logs(fastdl_http_t *s,fastdl_http_log_fn sink,void *user,unsigned limit) {
     if(!s || !sink || !limit) return 0;
