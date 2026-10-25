@@ -1,81 +1,192 @@
 #include <fastdl/config.h>
+#include <ctype.h>
+#include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <ctype.h>
-#include <limits.h>
-void fastdl_config_defaults(fastdl_config_t *c) {
-    memset(c, 0, sizeof *c);
-    strcpy(c->bind, "127.0.0.1"); strcpy(c->root, "{game}");
-    strcpy(c->allow_dirs, "maps models sound sprites gfx overviews");
-    strcpy(c->allow_extensions, "bsp mdl wav mp3 spr tga bmp txt res wad");
-    c->port=17015; c->max_clients=64; c->per_ip=4; c->requests_per_second=20;
-    c->timeout_seconds=15; c->cpu=-1; c->bytes_per_second=8*1024*1024;
-    c->access_log=1;
-    c->max_file_bytes=128*1024*1024;
+
+typedef enum fastdl_setting_kind
+{
+    fastdl_setting_text,
+    fastdl_setting_integer,
+    fastdl_setting_bytes
+} fastdl_setting_kind_t;
+
+typedef struct fastdl_setting
+{
+    const authum_char_t *name;
+    fastdl_setting_kind_t kind;
+    authum_usize_t offset;
+    authum_usize_t capacity;
+    authum_i64_t minimum;
+    authum_i64_t maximum;
+} fastdl_setting_t;
+
+/* Adding a setting extends the schema, not parser control flow. */
+static const fastdl_setting_t settings[] = {
+    {"bind", fastdl_setting_text, offsetof(fastdl_config_t, bind), 64, 0, 0},
+    {"root", fastdl_setting_text, offsetof(fastdl_config_t, root), AUTHUM_HTTP_PATH_CAPACITY, 0, 0},
+    {"allow_dirs", fastdl_setting_text, offsetof(fastdl_config_t, allow_dirs), 512, 0, 0},
+    {"allow_extensions", fastdl_setting_text, offsetof(fastdl_config_t, allow_extensions), 512, 0,
+     0},
+    {"deny_prefixes", fastdl_setting_text, offsetof(fastdl_config_t, deny_prefixes), 512, 0, 0},
+    {"port", fastdl_setting_integer, offsetof(fastdl_config_t, port), 0, 1, 65535},
+    {"max_clients", fastdl_setting_integer, offsetof(fastdl_config_t, max_clients), 0, 1, 256},
+    {"per_ip", fastdl_setting_integer, offsetof(fastdl_config_t, per_ip), 0, 1, 64},
+    {"requests_per_second", fastdl_setting_integer, offsetof(fastdl_config_t, requests_per_second),
+     0, 1, 1000},
+    {"timeout_seconds", fastdl_setting_integer, offsetof(fastdl_config_t, timeout_seconds), 0, 1,
+     120},
+    {"cpu", fastdl_setting_integer, offsetof(fastdl_config_t, cpu), 0, -1, 1023},
+    {"access_log", fastdl_setting_integer, offsetof(fastdl_config_t, access_log), 0, 0, 1},
+    {"bytes_per_second", fastdl_setting_bytes, offsetof(fastdl_config_t, bytes_per_second), 0, 1024,
+     1073741824},
+    {"max_file_bytes", fastdl_setting_bytes, offsetof(fastdl_config_t, max_file_bytes), 0, 1,
+     1073741824}};
+
+void
+fastdl_config_defaults(fastdl_config_t *config)
+{
+    memset(config, 0, sizeof *config);
+    strcpy(config->bind, "127.0.0.1");
+    strcpy(config->root, "{game}");
+    strcpy(config->allow_dirs, "maps models sound sprites gfx overviews");
+    strcpy(config->allow_extensions, "bsp mdl wav mp3 spr tga bmp txt res wad");
+    config->port = 17015;
+    config->max_clients = 64;
+    config->per_ip = 4;
+    config->requests_per_second = 20;
+    config->timeout_seconds = 15;
+    config->cpu = -1;
+    config->bytes_per_second = 8 * 1024 * 1024;
+    config->access_log = 1;
+    config->max_file_bytes = 128 * 1024 * 1024;
 }
-static char *trim(char *s) {
-    while (isspace((unsigned char)*s)) ++s;
-    char *e=s+strlen(s); while(e>s && isspace((unsigned char)e[-1])) --e;
-    *e=0; return s;
-}
-int fastdl_config_load(fastdl_config_t *c, const char *path, char *error, unsigned size) {
-    FILE *f=fopen(path,"r"); unsigned line=0; char buf[8192];
-    if(!f) { snprintf(error,size,"cannot open config '%s': %s",path,strerror(errno)); return 0; }
-    while(fgets(buf,sizeof buf,f)) {
-        ++line;
-        if(!strchr(buf,'\n') && !feof(f)) goto bad;
-        char *key=trim(buf); if(!*key || *key=='#' || *key==';') continue;
-        char *value=strchr(key,'='); if(!value) goto bad;
-        *value++=0; key=trim(key); value=trim(value);
-        if(!strcmp(key,"source")) {
-            if(!*value || c->source_count>=16 || strlen(value)>=sizeof c->sources[0]) goto bad;
-            strcpy(c->sources[c->source_count++],value); continue;
-        }
-#define STR(k) if(!strcmp(key,#k)) { if(strlen(value)>=sizeof c->k) goto bad; strcpy(c->k,value); continue; }
-        STR(bind) STR(root) STR(allow_dirs) STR(allow_extensions) STR(deny_prefixes)
-#undef STR
-        char *end; errno=0; long n=strtol(value,&end,10);
-        if(errno || end==value || *end) goto bad;
-#define NUM(k,lo,hi) if(!strcmp(key,#k)) { if(n<(lo)||n>(hi)) goto bad; c->k=n; continue; }
-        NUM(port,1,65535) NUM(max_clients,1,256) NUM(per_ip,1,64)
-        NUM(requests_per_second,1,1000) NUM(timeout_seconds,1,120) NUM(cpu,-1,1023)
-        NUM(access_log,0,1)
-        NUM(bytes_per_second,1024,1073741824) NUM(max_file_bytes,1,1073741824)
-#undef NUM
-        goto bad;
+
+static authum_char_t *
+trim(authum_char_t *text)
+{
+    while (isspace((authum_byte_t)*text))
+    {
+        ++text;
     }
-    if(ferror(f)) goto bad;
-    fclose(f); if(!*c->root) strcpy(c->root,"{game}"); if(!*c->allow_extensions) { snprintf(error,size,"config '%s': allow_extensions cannot be empty",path); return 0; }
-    if(!c->source_count) { strcpy(c->sources[0],c->root); c->source_count=1; }
-    return 1;
-bad:
-    snprintf(error,size,"config '%s': invalid setting at line %u",path,line); fclose(f); return 0;
+    authum_char_t *end = text + strlen(text);
+    while (end > text && isspace((authum_byte_t)end[-1]))
+    {
+        --end;
+    }
+    *end = 0;
+    return text;
 }
-/* Placeholders are config-only substitutions, never expanded from URLs. */
-int fastdl_config_expand(const char *source,const char *module,const char *game,char *out,unsigned size) {
-    unsigned used=0;
-    while(*source) {
-        const char *value=NULL; unsigned skip=0;
-        if(!strncmp(source,"{game}",6)) { value=game; skip=6; }
-        else if(!strncmp(source,"{module}",8)) { value=module; skip=8; }
-        else if(!strncmp(source,"{data}",6)) { value=module; skip=6; }
-        else if(*source=='{' || *source=='}') return 0;
-        if(value) {
-            size_t n=strlen(value);
-            if(n>=size-used) return 0;
-            memcpy(out+used,value,n); used+=(unsigned)n;
-            if(skip==6 && !strncmp(source,"{data}",6)) {
-                if(5>=size-used) return 0;
-                memcpy(out+used,"/data",5); used+=5;
+
+static authum_bool_t
+apply_setting(fastdl_config_t *config, const authum_char_t *name, const authum_char_t *value)
+{
+    if (!strcmp(name, "source"))
+    {
+        if (!*value || config->source_count >= AUTHUM_HTTP_MAX_SOURCES ||
+            strlen(value) >= sizeof config->sources[0])
+        {
+            return authum_bool_false;
+        }
+        strcpy(config->sources[config->source_count++], value);
+        return authum_bool_true;
+    }
+
+    for (authum_usize_t index = 0; index < sizeof settings / sizeof settings[0]; ++index)
+    {
+        const fastdl_setting_t *setting = &settings[index];
+        if (strcmp(setting->name, name))
+        {
+            continue;
+        }
+        authum_byte_t *destination = (authum_byte_t *)config + setting->offset;
+        if (setting->kind == fastdl_setting_text)
+        {
+            if (strlen(value) >= setting->capacity)
+            {
+                return authum_bool_false;
             }
-            source+=skip;
-        } else {
-            if(used+1>=size) return 0;
-            out[used++]=*source++;
+            strcpy((authum_char_t *)destination, value);
+            return authum_bool_true;
+        }
+
+        authum_char_t *end;
+        errno = 0;
+        authum_i64_t number = strtoll(value, &end, 10);
+        if (errno || end == value || *end || number < setting->minimum || number > setting->maximum)
+        {
+            return authum_bool_false;
+        }
+        if (setting->kind == fastdl_setting_integer)
+        {
+            *(authum_i32_t *)destination = (authum_i32_t)number;
+        }
+        else
+        {
+            *(authum_u64_t *)destination = (authum_u64_t)number;
+        }
+        return authum_bool_true;
+    }
+    return authum_bool_false;
+}
+
+authum_bool_t
+fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_char_t *error,
+                   authum_usize_t error_size)
+{
+    FILE *file = fopen(path, "r");
+    if (!file)
+    {
+        snprintf(error, error_size, "cannot open config '%s': %s", path, strerror(errno));
+        return authum_bool_false;
+    }
+
+    authum_usize_t line_number = 0;
+    authum_char_t line[8192];
+    while (fgets(line, sizeof line, file))
+    {
+        ++line_number;
+        if (!strchr(line, '\n') && !feof(file))
+        {
+            goto invalid;
+        }
+        authum_char_t *name = trim(line);
+        if (!*name || *name == '#' || *name == ';')
+        {
+            continue;
+        }
+        authum_char_t *value = strchr(name, '=');
+        if (!value)
+        {
+            goto invalid;
+        }
+        *value++ = 0;
+        if (!apply_setting(config, trim(name), trim(value)))
+        {
+            goto invalid;
         }
     }
-    if(used>=size) return 0;
-    out[used]=0; return 1;
+    if (ferror(file))
+    {
+        goto invalid;
+    }
+    fclose(file);
+    if (!*config->allow_extensions)
+    {
+        snprintf(error, error_size, "config '%s': allow_extensions cannot be empty", path);
+        return authum_bool_false;
+    }
+    if (!config->source_count)
+    {
+        strcpy(config->sources[0], *config->root ? config->root : "{game}");
+        config->source_count = 1;
+    }
+    return authum_bool_true;
+
+invalid:
+    snprintf(error, error_size, "config '%s': invalid setting at line %u", path, line_number);
+    fclose(file);
+    return authum_bool_false;
 }

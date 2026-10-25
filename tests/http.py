@@ -88,6 +88,18 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
                 reset.sendall(b'GET /maps/test.bsp HTTP/1.0\r\n\r\n')
                 reset.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0))
         assert request(port,'/maps/test.bsp').endswith(payload)
+        # Fragmented HTTP/1.1 headers must be assembled before parsing.
+        with socket.create_connection(('127.0.0.1',port),timeout=4) as fragmented:
+            for part in [b'GET /maps/test.bsp HTTP/1.1\r\n', b'Host: localhost\r\n',
+                         b'User-Agent: browser-test\r\n', b'\r\n']:
+                fragmented.sendall(part)
+                time.sleep(.01)
+            chunks=[]
+            while True:
+                part=fragmented.recv(65536)
+                if not part: break
+                chunks.append(part)
+            assert b''.join(chunks).split(b'\r\n\r\n',1)[1]==payload
         for path in ['/maps/../outside/secret.bsp','/maps/%2e%2e/secret.bsp',
                      '/maps/link.bsp','/maps/linkdir/secret.bsp','/maps//test.bsp',
                      '/maps/.hidden.bsp','/maps/secret.cfg','/maps/private.bsp',
@@ -97,6 +109,10 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
         assert request(port,'/maps/test.bsp','POST').startswith(b'HTTP/1.0 405 ')
         for extra in [b'Content-Length: 1\r\n',b'Transfer-Encoding: chunked\r\n',b'bad header\r\n']:
             assert request(port,'/maps/test.bsp',extra=extra).startswith(b'HTTP/1.0 400 ')
+        for index in range(100):
+            prefix=['%2e%2e/', '../', '.hidden/', '..\\', 'x?y/', 'x#/', 'x%00/', './', '//', 'x@/'][index%10]
+            invalid=request(port,f'/maps/{prefix}not-published-{index}.bsp')
+            assert invalid.startswith((b'HTTP/1.0 400 ',b'HTTP/1.0 404 '))
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             for result in pool.map(lambda _: request(port,'/maps/test.bsp'),range(16)):
                 assert result.split(b'\r\n\r\n',1)[1]==payload

@@ -1,4 +1,4 @@
-"""Package the single installed Authum module and its configuration."""
+"""Package FastDL and its matching shared Authum host."""
 from pathlib import Path
 import tarfile
 import zipfile
@@ -11,10 +11,10 @@ if not module.is_file():
     raise SystemExit('Install the fastdl CMake component before packaging')
 host = dist.parent / 'build-authum/authum.so'
 if not host.is_file():
-    raise SystemExit('Build build-authum/authum.so first: FastDL 0.3 requires the updated host')
+    raise SystemExit('Build build-authum/authum.so first: FastDL 0.4 requires the updated host')
 shutil.copy2(host, source / 'addons/authum/authum.so')
 (source / 'FASTDL-UPGRADE.txt').write_text(
-    'FastDL 0.3 requires Authum 4.1 (managed-thread API, ABI 1.1).\n'
+    'FastDL 0.4 requires Authum 4.2 (shared HTTP/clock API, ABI 1.2).\n'
     'Stop HLDS before replacing addons/authum/authum.so and '\
     'addons/authum/modules/fastdl/fastdl.so.\n'
     'Preserve your existing configs/fastdl.cfg and all other server configs.\n'

@@ -68,7 +68,7 @@ When upgrading older versions, stop/unload the old module first, replace
 fastdl.so, and remove obsolete fastdl-http files from the module root/data.
 Keep your local config. Sources, placeholders and limits are unchanged.
 
-FastDL 0.3 requires the managed-thread API in Authum 4.1 (ABI 1.1). Update
+FastDL 0.4 requires the shared HTTP/clock API in Authum 4.2 (ABI 1.2). Update
 `addons/authum/authum.so` together with fastdl.so while HLDS is stopped. Older
 modules remain ABI-compatible; this FastDL fails cleanly on older hosts.
 
@@ -87,14 +87,16 @@ cmake --build build-authum --target authum
 python3 scripts/package.py
 ```
 
-Authum and picohttpparser are pinned Git submodules. Upstream license notices
+Authum is a Git submodule; its own pinned submodules include picohttpparser. Upstream license notices
 are included in the install. fastdl.so is i386, including the HTTP code. The test driver is not installed
 or needed at runtime. `-DFASTDL_BUILD_MODULE=OFF` builds the HTTP core and
 its tests for the native architecture with a test-only Authum thread host.
 
 ## Operations and verification
 
-The HTTP worker never calls engine or Authum APIs. Configuration, source
+FastDL contains configuration, source/placeholder adaptation and log routing only.
+HTTP implementation and picohttpparser live once in Authum, behind its API tables.
+The HTTP worker never calls engine or module callbacks. Configuration, source
 handles and the listening socket are prepared before start returns; port/source
 errors therefore fail module startup immediately. Source paths are opened using
 directory handles: the module never changes the process working directory.
@@ -172,3 +174,16 @@ HTTP is answering, but does not confirm the source/path configuration is correct
 For remote reachability, repeat the request from another machine using the
 public address. A game client with all files already cached will not download
 those files and therefore will not produce HTTP requests for them.
+
+## Readable components and API reuse
+
+The module config.c contains a declarative setting schema, sources.c expands
+placeholders, and http.c builds Authum HTTP options. The Authum bridge handles
+module lifecycle and game-thread log flushing. There is no socket, HTTP parser
+or OS clock implementation in FastDL.
+
+The reusable constructor and component map are documented in
+[Authum HTTP API](lib/authum/docs/http.md). Application state uses Authum types;
+libc/OS boundary types remain native where required. Formatting follows
+.clang-format (Allman braces, no single-line control flow, 100-column limit).
+CI checks formatting with clang-format 18.1.8 and scripts/check_format.py.
