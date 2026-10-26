@@ -90,7 +90,7 @@ cmake --build build-authum --target authum
 python3 scripts/package.py
 ```
 
-Authum is a Git submodule; its own pinned submodules include picohttpparser. Upstream license notices
+Authum is a Git submodule; HTTP parsing is provided by its pinned LH dependency. License notices
 are included in the install. fastdl.so is i386, including the HTTP code. The test driver is not installed
 or needed at runtime. `-DFASTDL_BUILD_MODULE=OFF` builds the HTTP core and
 its tests for the native architecture with a test-only Authum thread host.
@@ -98,7 +98,7 @@ its tests for the native architecture with a test-only Authum thread host.
 ## Operations and verification
 
 FastDL contains configuration, source/placeholder adaptation and log routing only.
-HTTP implementation and picohttpparser live once in Authum, behind its API tables.
+The HTTP service lives once in Authum, behind its API tables; its parser is a portable LH brick.
 The HTTP worker never calls engine or module callbacks. Configuration, source
 handles and the listening socket are prepared before start returns; port/source
 errors therefore fail module startup immediately. Source paths are opened using

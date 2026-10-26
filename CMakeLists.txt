@@ -90,9 +90,6 @@ endif()
 install(FILES fastdl.cfg
     DESTINATION addons/authum/modules/fastdl/configs COMPONENT fastdl
 )
-install(FILES "${AUTHUM_DIR}/lib/picohttpparser/picohttpparser.h"
-    DESTINATION addons/authum/modules/fastdl/licenses COMPONENT fastdl
-)
 install(FILES LICENSE
     DESTINATION addons/authum/modules/fastdl/licenses RENAME fastdl-LICENSE COMPONENT fastdl
 )
@@ -100,6 +97,14 @@ install(FILES LICENSE
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    # Private host-backend tests consume the same standalone parser brick as
+    # Authum. The FastDL module itself still uses Authum's public service only.
+    if(NOT TARGET lh_http_parser)
+        set(LH_BUILD_TESTS OFF CACHE BOOL "Build LH tests" FORCE)
+        set(LH_BUILD_DOCS OFF CACHE BOOL "Build LH docs" FORCE)
+        set(LH_BUILD_BENCH OFF CACHE BOOL "Build LH benchmarks" FORCE)
+        add_subdirectory("${AUTHUM_DIR}/lib/lh" "${CMAKE_BINARY_DIR}/lh-parser" EXCLUDE_FROM_ALL)
+    endif()
     file(GLOB AUTHUM_HTTP_TEST_SOURCES CONFIGURE_DEPENDS
         "${AUTHUM_DIR}/src/authum/host/http/*.c"
     )
@@ -109,15 +114,13 @@ if(BUILD_TESTING)
         "${AUTHUM_DIR}/src/authum/host/clock.c"
         "${AUTHUM_DIR}/src/authum/host/placeholders.c"
         ${AUTHUM_HTTP_TEST_SOURCES}
-        "${AUTHUM_DIR}/lib/picohttpparser/picohttpparser.c"
     )
     target_include_directories(fastdl_test_host
         PUBLIC "${AUTHUM_DIR}/include" "${AUTHUM_DIR}/src"
-        PRIVATE "${AUTHUM_DIR}/lib/picohttpparser"
     )
     target_compile_definitions(fastdl_test_host PUBLIC _FILE_OFFSET_BITS=64)
     target_compile_options(fastdl_test_host PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(fastdl_test_host PUBLIC Threads::Threads)
+    target_link_libraries(fastdl_test_host PUBLIC Threads::Threads lh_http_parser)
     if(FASTDL_BUILD_MODULE)
         target_compile_options(fastdl_test_host PUBLIC -m32)
         target_link_options(fastdl_test_host PUBLIC -m32)
