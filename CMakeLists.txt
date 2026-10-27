@@ -97,12 +97,13 @@ install(FILES LICENSE
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    # Private host-backend tests consume the same standalone parser brick as
-    # Authum. The FastDL module itself still uses Authum's public service only.
+    # Private host-backend tests use LH parsing and OS primitives through the
+    # host implementation. The module consumes only Authum's public service.
     if(NOT TARGET lh_http_parser)
         set(LH_BUILD_TESTS OFF CACHE BOOL "Build LH tests" FORCE)
         set(LH_BUILD_DOCS OFF CACHE BOOL "Build LH docs" FORCE)
         set(LH_BUILD_BENCH OFF CACHE BOOL "Build LH benchmarks" FORCE)
+        set(LH_LIBRARY_OPTION_OS ON CACHE BOOL "Host tests need LH OS services" FORCE)
         add_subdirectory("${AUTHUM_DIR}/lib/lh" "${CMAKE_BINARY_DIR}/lh-parser" EXCLUDE_FROM_ALL)
     endif()
     file(GLOB AUTHUM_HTTP_TEST_SOURCES CONFIGURE_DEPENDS
@@ -120,7 +121,7 @@ if(BUILD_TESTING)
     )
     target_compile_definitions(fastdl_test_host PUBLIC _FILE_OFFSET_BITS=64)
     target_compile_options(fastdl_test_host PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(fastdl_test_host PUBLIC Threads::Threads lh_http_parser)
+    target_link_libraries(fastdl_test_host PUBLIC Threads::Threads lh)
     if(FASTDL_BUILD_MODULE)
         target_compile_options(fastdl_test_host PUBLIC -m32)
         target_link_options(fastdl_test_host PUBLIC -m32)
