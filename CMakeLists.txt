@@ -3,9 +3,8 @@ project(fastdl C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "FastDL targets Linux HLDS")
-endif()
+# The module names no platform: HLDS ships it as a 32-bit Linux .so and as a
+# 32-bit Windows .dll, and only the build differs.
 
 option(FASTDL_BUILD_MODULE "Build the i386 Authum module" ON)
 option(FASTDL_SANITIZE "Enable ASan/UBSan" OFF)
@@ -20,6 +19,15 @@ add_library(fastdl_logic STATIC
 target_include_directories(fastdl_logic PUBLIC include "${AUTHUM_DIR}/include")
 target_compile_definitions(fastdl_logic PUBLIC _FILE_OFFSET_BITS=64)
 set_target_properties(fastdl_logic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(WIN32)
+    # The SDK compiles with LTO. Naming the job count keeps the MinGW linker
+    # from running the LTRANS jobs one by one and warning about it.
+    include(ProcessorCount)
+    ProcessorCount(lh_jobs)
+    if(lh_jobs GREATER 1)
+        target_link_options(fastdl_logic PUBLIC "-flto=${lh_jobs}")
+    endif()
+endif()
 
 function(fastdl_configure_code target)
     target_compile_options(${target} PRIVATE
@@ -44,12 +52,17 @@ if(FASTDL_BUILD_MODULE)
     )
     fastdl_configure_code(fastdl)
     target_link_options(fastdl PRIVATE
-        -static-libgcc "LINKER:--gc-sections" "LINKER:-z,relro,-z,now"
+        -static-libgcc "LINKER:--gc-sections"
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # ELF-only hardening: full RELRO with immediate binding.
+        target_link_options(fastdl PRIVATE "LINKER:-z,relro,-z,now")
+    endif()
     target_link_libraries(fastdl PRIVATE fastdl_logic)
     set_target_properties(fastdl PROPERTIES
         PREFIX ""
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules/fastdl"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/modules/fastdl"
     )
     if(CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$" AND CMAKE_STRIP
        AND NOT FASTDL_SANITIZE)
@@ -59,6 +72,7 @@ if(FASTDL_BUILD_MODULE)
     endif()
     install(TARGETS fastdl
         LIBRARY DESTINATION addons/authum/modules/fastdl COMPONENT fastdl
+        RUNTIME DESTINATION addons/authum/modules/fastdl COMPONENT fastdl
     )
     install(FILES "${AUTHUM_DIR}/LICENSE"
         DESTINATION addons/authum/modules/fastdl/licenses
@@ -145,6 +159,7 @@ if(BUILD_TESTING)
 
     add_executable(fastdl_test_http tests/http_driver.c)
     target_compile_options(fastdl_test_http PRIVATE -Wall -Wextra -Werror)
+    target_include_directories(fastdl_test_http PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(fastdl_test_http PRIVATE fastdl_logic fastdl_test_host)
     add_test(NAME fastdl_http COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/http.py $<TARGET_FILE:fastdl_test_http>
@@ -154,12 +169,24 @@ if(BUILD_TESTING)
     if(FASTDL_BUILD_MODULE)
         add_executable(fastdl_test_module tests/module.c)
         target_compile_options(fastdl_test_module PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(fastdl_test_module PRIVATE fastdl_logic fastdl_test_host dl)
+        target_include_directories(fastdl_test_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(fastdl_test_module PRIVATE fastdl_logic fastdl_test_host)
+        if(CMAKE_DL_LIBS)
+            # The module image is opened by the loader the platform provides.
+            target_link_libraries(fastdl_test_module PRIVATE ${CMAKE_DL_LIBS})
+        endif()
         add_test(NAME fastdl_module COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/module.py
             $<TARGET_FILE:fastdl_test_module> $<TARGET_FILE:fastdl>
         )
         set_tests_properties(fastdl_module PROPERTIES TIMEOUT 40)
+    endif()
+    if(WIN32)
+        # The test drivers speak winsock2 directly.
+        target_link_libraries(fastdl_test_http PRIVATE ws2_32)
+        if(FASTDL_BUILD_MODULE)
+            target_link_libraries(fastdl_test_module PRIVATE ws2_32)
+        endif()
     endif()
 endif()
 

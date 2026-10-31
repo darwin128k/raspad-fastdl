@@ -1,8 +1,14 @@
 # raspad-fastdl
 
-Linux GoldSrc FastDL for Authum (GameDLL host, no Metamod). The 32-bit module
+GoldSrc FastDL for Authum (GameDLL host, no Metamod). The 32-bit module
 contains an HTTP server running on an Authum-managed thread inside HLDS. No helper
 executable or child process is needed. No compression or TLS. GET/HEAD, one request per connection.
+
+The module itself names no platform: the same sources build as a 32-bit Linux
+`.so` for HLDS and as a 32-bit Windows `.dll` for a Windows host. The tests
+build and run on both; the checks that only Linux can make (no_new_privs, the
+affinity mask, the core rlimit, the SIGPIPE handler, forked children) are
+listed by the test run when it happens on Windows.
 
 ## Configuration
 
@@ -89,6 +95,14 @@ cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
 cmake -S lib/authum -B build-authum -G Ninja -DCMAKE_BUILD_TYPE=Release -DAUTHUM_BUILD_EXAMPLES=OFF -DAUTHUM_BUILD_API_DOCS=OFF
 cmake --build build-authum --target authum
 python3 scripts/package.py
+```
+
+The same tree builds on Windows (MSYS2 MinGW, 32-bit):
+
+```powershell
+cmake -S . -B build-win32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win32
+ctest --test-dir build-win32 --output-on-failure
 ```
 
 Authum is a Git submodule; HTTP parsing is provided by its pinned LH dependency. License notices

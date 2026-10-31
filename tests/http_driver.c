@@ -1,13 +1,11 @@
 #define _GNU_SOURCE
 /* Test-only process wrapper around the exact same worker used by fastdl.so. */
+#include <tests/platform.h>
 #include <fastdl/http.h>
 #include <authum/host/threads.h>
 #include <authum/host/http.h>
 #include <authum/host/placeholders.h>
 #include <signal.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +30,7 @@ main(int argc, char **argv)
 {
     const char *config = NULL, *base = ".", *game_dir = NULL;
     int control = -1;
+    unsigned control_port = 0;
     for (int i = 1; i < argc; i++)
     {
         if (i + 1 >= argc)
@@ -54,6 +53,10 @@ main(int argc, char **argv)
         {
             control = atoi(argv[++i]);
         }
+        else if (!strcmp(argv[i], "--control-port"))
+        {
+            control_port = (unsigned)strtoul(argv[++i], NULL, 10);
+        }
         else
         {
             return 1;
@@ -63,21 +66,31 @@ main(int argc, char **argv)
     {
         return 1;
     }
-    char module[4096], game[4096], fallback[4096], error[512];
-    if (!realpath(base, module))
+    if (fastdl_socket_start())
     {
+        return 1;
+    }
+    char module[4096], game[4096], fallback[4096], error[512];
+    if (fastdl_real_path(base, module, sizeof module))
+    {
+        fastdl_socket_stop();
         return 1;
     }
     if (!game_dir)
     {
-        if (snprintf(fallback, sizeof fallback, "%s/../../../..", module) >= (int)sizeof fallback)
+        if (snprintf(fallback, sizeof fallback,
+                     "%s" FASTDL_PATH_SEPARATOR ".." FASTDL_PATH_SEPARATOR
+                     ".." FASTDL_PATH_SEPARATOR ".." FASTDL_PATH_SEPARATOR "..",
+                     module) >= (int)sizeof fallback)
         {
+            fastdl_socket_stop();
             return 1;
         }
         game_dir = fallback;
     }
-    if (!realpath(game_dir, game))
+    if (fastdl_real_path(game_dir, game, sizeof game))
     {
+        fastdl_socket_stop();
         return 1;
     }
     fastdl_config_t cfg;
@@ -85,10 +98,16 @@ main(int argc, char **argv)
     if (!fastdl_config_load(&cfg, config, error, sizeof error))
     {
         fprintf(stderr, "%s\n", error);
+        fastdl_socket_stop();
         return 1;
     }
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
+#if defined(_WIN32)
+    /* The harness stops the driver with CTRL_BREAK, which the CRT raises as
+     * SIGBREAK: Windows has no SIGTERM delivery for another process. */
+    signal(SIGBREAK, on_signal);
+#endif
     authum_thread_owner_t owner;
     authum_threads_t threads;
     authum_threads_host_init(&owner, &threads);
@@ -100,6 +119,7 @@ main(int argc, char **argv)
     char data_text[4096];
     if (snprintf(data_text, sizeof data_text, "%s/data", module) >= (int)sizeof data_text)
     {
+        fastdl_socket_stop();
         return 1;
     }
     const authum_char_t *standard[authum_placeholder_standard_count] = {0};
@@ -114,13 +134,33 @@ main(int argc, char **argv)
     if (!http)
     {
         fprintf(stderr, "%s\n", error);
+        fastdl_socket_stop();
         return 1;
     }
     fprintf(stderr, "buffers_bytes=%lu max_clients=%d\n",
             (unsigned long)fastdl_http_memory_usage(http), cfg.max_clients);
-    if (control >= 0 && send(control, "READY", 5, MSG_NOSIGNAL) != 5)
+    /* The control channel: an inherited descriptor on POSIX, a loopback
+     * connection on Windows, where a descriptor cannot cross processes. */
+    fastdl_socket_t control_socket = FASTDL_SOCKET_INVALID;
+    if (control_port)
+    {
+        control_socket = fastdl_socket_connect_loopback(control_port);
+        if (control_socket == FASTDL_SOCKET_INVALID)
+        {
+            fastdl_http_stop(http);
+            fastdl_socket_stop();
+            return 1;
+        }
+    }
+    else if (control >= 0)
+    {
+        control_socket = (fastdl_socket_t)control;
+    }
+    if (control_socket != FASTDL_SOCKET_INVALID &&
+        fastdl_socket_send(control_socket, "READY", 5) != 5)
     {
         fastdl_http_stop(http);
+        fastdl_socket_stop();
         return 1;
     }
     while (!stopped)
@@ -129,10 +169,16 @@ main(int argc, char **argv)
         {
             fastdl_http_drain_logs(http, access_line, NULL, 16);
         }
-        struct pollfd p = {.fd = control, .events = POLLIN};
-        if (poll(&p, 1, 50) > 0)
+        if (control_socket != FASTDL_SOCKET_INVALID)
         {
-            break;
+            if (fastdl_socket_wait_readable(control_socket, 50) > 0)
+            {
+                break;
+            }
+        }
+        else
+        {
+            fastdl_sleep_ms(50);
         }
     }
     fastdl_http_shutdown(http);
@@ -141,9 +187,10 @@ main(int argc, char **argv)
     authum_placeholder_host_drop_owner(&placeholder_owner);
     authum_http_host_drop_owner(&http_owner);
     authum_threads_host_drop_owner(&owner);
-    if (control >= 0)
+    if (control_socket != FASTDL_SOCKET_INVALID)
     {
-        close(control);
+        fastdl_socket_close(control_socket);
     }
+    fastdl_socket_stop();
     return 0;
 }
