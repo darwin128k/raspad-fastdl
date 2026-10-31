@@ -1,13 +1,9 @@
-#define _GNU_SOURCE
 #include <fastdl/bridge.h>
 #include <fastdl/http.h>
 #include <authum/logger.h>
 #include <authum/path.h>
 #include <authum/event/server.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <authum/null.h>
 static authum_host_t g_host;
 static authum_logger_t g_log;
 static fastdl_http_t *g_http;
@@ -35,7 +31,7 @@ access_frame(const authum_char_t *name, authum_ptr payload, authum_ptr user)
         g_log_budget = 100;
     }
     authum_usize_t limit = g_log_budget < 8 ? g_log_budget : 8;
-    g_log_budget -= fastdl_http_drain_logs(g_http, access_line, NULL, limit);
+    g_log_budget -= fastdl_http_drain_logs(g_http, access_line, authum_null, limit);
     return authum_event_result_continue;
 }
 
@@ -45,13 +41,13 @@ fastdl_authum_stop(void)
     if (g_log_subscribed)
     {
         authum_events_unsubscribe(authum_host_get_events(&g_host), AUTHUM_EVENT_SERVER_FRAME,
-                                  access_frame, NULL);
+                                  access_frame, authum_null);
         g_log_subscribed = 0;
     }
     fastdl_http_shutdown(g_http);
-    fastdl_http_drain_logs(g_http, access_line, NULL, 257);
+    fastdl_http_drain_logs(g_http, access_line, authum_null, 257);
     fastdl_http_stop(g_http);
-    g_http = NULL;
+    g_http = authum_null;
     authum_logger_close(&g_log);
     authum_host_clear(&g_host);
 }
@@ -73,7 +69,6 @@ fastdl_authum_start(authum_host_t *host)
     }
     const authum_path_t *config_dir = authum_host_get_module_config_path(&g_host);
     authum_path_t config_path;
-    authum_char_t error[512];
     if (!config_dir || !authum_path_join(&config_path, config_dir, "fastdl.cfg"))
     {
         authum_logger_error(&g_log, "host provides no module config directory");
@@ -81,6 +76,7 @@ fastdl_authum_start(authum_host_t *host)
     }
     fastdl_config_t cfg;
     fastdl_config_defaults(&cfg);
+    authum_char_t error[512];
     if (!fastdl_config_load(&cfg, authum_path_get_cstr(&config_path), error, sizeof error))
     {
         authum_logger_error(&g_log, "%s", error);
@@ -108,7 +104,7 @@ fastdl_authum_start(authum_host_t *host)
     }
     if (cfg.access_log)
     {
-        if (!authum_host_subscribe(&g_host, AUTHUM_EVENT_SERVER_FRAME, access_frame, NULL))
+        if (!authum_host_subscribe(&g_host, AUTHUM_EVENT_SERVER_FRAME, access_frame, authum_null))
         {
             authum_logger_error(&g_log, "access_log requires Authum server-frame events");
             goto failed;

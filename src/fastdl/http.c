@@ -1,7 +1,7 @@
 #include <fastdl/http.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <authum/cstr.h>
+#include <authum/memory.h>
+#include <authum/null.h>
 
 struct fastdl_http
 {
@@ -14,11 +14,13 @@ build_options(const fastdl_config_t *config, const authum_placeholder_service_t 
               authum_http_options_t *options, authum_char_t *error, authum_usize_t error_size)
 {
     authum_http_options_init(options);
-    memcpy(options->bind, config->bind, sizeof options->bind);
-    memcpy(options->allow_dirs, config->allow_dirs, sizeof options->allow_dirs);
-    memcpy(options->allow_extensions, config->allow_extensions, sizeof options->allow_extensions);
-    strcpy(options->root_extensions, "wad");
-    memcpy(options->deny_prefixes, config->deny_prefixes, sizeof options->deny_prefixes);
+    authum_memory_copy(options->bind, config->bind, sizeof options->bind);
+    authum_memory_copy(options->allow_dirs, config->allow_dirs, sizeof options->allow_dirs);
+    authum_memory_copy(options->allow_extensions, config->allow_extensions,
+                       sizeof options->allow_extensions);
+    authum_cstr_copy(options->root_extensions, sizeof options->root_extensions, "wad");
+    authum_memory_copy(options->deny_prefixes, config->deny_prefixes,
+                       sizeof options->deny_prefixes);
     options->port = config->port;
     options->max_clients = config->max_clients;
     options->per_ip = config->per_ip;
@@ -35,13 +37,13 @@ build_options(const fastdl_config_t *config, const authum_placeholder_service_t 
         if (!authum_placeholder_expand(placeholders, config->sources[index], expanded,
                                        sizeof expanded))
         {
-            snprintf(error, error_size, "source[%u]: unknown placeholder or path too long",
-                     index + 1);
+            authum_cstr_format(error, error_size,
+                               "source[%u]: unknown placeholder or path too long", index + 1);
             return authum_bool_false;
         }
         if (!authum_http_source_add(options, expanded))
         {
-            snprintf(error, error_size, "source[%u]: invalid source path", index + 1);
+            authum_cstr_format(error, error_size, "source[%u]: invalid source path", index + 1);
             return authum_bool_false;
         }
     }
@@ -55,31 +57,31 @@ fastdl_http_start(const fastdl_config_t *config, const authum_http_service_t *se
 {
     if (!service || !service->ops || !service->ops->open)
     {
-        snprintf(error, error_size, "host has no HTTP service; update Authum");
-        return NULL;
+        authum_cstr_format(error, error_size, "host has no HTTP service; update Authum");
+        return authum_null;
     }
     if (!placeholders || !placeholders->ops || !placeholders->ops->expand)
     {
-        snprintf(error, error_size, "host has no placeholder service; update Authum");
-        return NULL;
+        authum_cstr_format(error, error_size, "host has no placeholder service; update Authum");
+        return authum_null;
     }
     authum_http_options_t options;
     if (!build_options(config, placeholders, &options, error, error_size))
     {
-        return NULL;
+        return authum_null;
     }
-    fastdl_http_t *http = calloc(1, sizeof *http);
+    fastdl_http_t *http = authum_memory_alloc_zero(1, sizeof *http);
     if (!http)
     {
-        snprintf(error, error_size, "HTTP facade allocation failed");
-        return NULL;
+        authum_cstr_format(error, error_size, "HTTP facade allocation failed");
+        return authum_null;
     }
     http->service = *service;
     http->server = authum_http_open(service, &options, error, error_size);
     if (!http->server)
     {
-        free(http);
-        return NULL;
+        authum_memory_free(http);
+        return authum_null;
     }
     return http;
 }
@@ -90,7 +92,7 @@ fastdl_http_stop(fastdl_http_t *http)
     if (http)
     {
         authum_http_close(&http->service, http->server);
-        free(http);
+        authum_memory_free(http);
     }
 }
 

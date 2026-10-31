@@ -21,6 +21,6 @@ fastdl_http_memory_usage(const fastdl_http_t *server);
 typedef authum_http_log_fn fastdl_http_log_fn;
 /* Single consumer, on the owning thread. Never performs disk I/O itself. */
 authum_usize_t
-fastdl_http_drain_logs(fastdl_http_t *server, fastdl_http_log_fn sink, void *user,
+fastdl_http_drain_logs(fastdl_http_t *server, fastdl_http_log_fn sink, authum_ptr user,
                        authum_usize_t limit);
 #endif
