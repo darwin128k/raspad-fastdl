@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
             slow.sendall(b'GET /maps/')
             time.sleep(1.3); slow.settimeout(2); assert slow.recv(10)==b''
         busy=subprocess.run([binary,'--config',str(cfg)],capture_output=True,timeout=5)
-        assert busy.returncode!=0 and b'Address already in use' in busy.stderr
+        assert busy.returncode!=0 and b'cannot listen on' in busy.stderr
     finally:
         proc.terminate(); proc.wait(timeout=3)
         assert proc.returncode==0,log_text(proc)

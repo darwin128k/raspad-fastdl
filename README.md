@@ -70,10 +70,11 @@ When upgrading older versions, stop/unload the old module first, replace
 fastdl.so, and remove obsolete fastdl-http files from the module root/data.
 Keep your local config. Sources, placeholders and limits are unchanged.
 
-FastDL 0.5 requires the shared HTTP/clock/placeholder API in Authum 4.3
-(ABI 1.3). Update
-`addons/authum/authum.so` together with fastdl.so while HLDS is stopped. Older
-modules remain ABI-compatible; this FastDL fails cleanly on older hosts.
+FastDL 0.5 requires the shared HTTP/clock/placeholder API in Authum 4.0.0
+(ABI 3.0). Update
+`addons/authum/authum.so` together with fastdl.so while HLDS is stopped. The
+module ABI 3.0 breaks compatibility with 2.x: an older host refuses this
+module, and an older module is refused by the new host.
 
 ## Build and package
 
@@ -84,7 +85,7 @@ cmake -S . -B build-linux32 -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-linux32
 ctest --test-dir build-linux32 --output-on-failure
 cmake --install build-linux32 --component fastdl --prefix "$PWD/dist/linux32"
-# Also build the updated host (needed by FastDL 0.3):
+# Also build the updated host (needed by FastDL 0.5):
 cmake -S lib/authum -B build-authum -G Ninja -DCMAKE_BUILD_TYPE=Release -DAUTHUM_BUILD_EXAMPLES=OFF -DAUTHUM_BUILD_API_DOCS=OFF
 cmake --build build-authum --target authum
 python3 scripts/package.py
@@ -112,8 +113,8 @@ size cap, and global response-byte bandwidth budget with up to 100 ms burst.
 Access logging is enabled by default (access_log=1). sendfile is used; cold disk I/O can delay the
 worker. Range requests receive a complete representation.
 
-Authum signals the worker through the registered wake callback and joins it
-before calling module stop. FastDL then frees its state
+Authum's HTTP service owns the worker: it runs an LH loop and joins it when the
+module closes the service. FastDL then frees its state
 or unloading code. Clients, sources, pipe and listener are closed. No forced
 thread cancellation or unsafe unload timeout is used. Shutdown normally wakes
 immediately, but a slow/stalled filesystem operation can delay join. The worker
@@ -181,11 +182,12 @@ those files and therefore will not produce HTTP requests for them.
 ## Readable components and API reuse
 
 The module config.c contains a declarative setting schema, and http.c builds
-Authum HTTP options. Placeholder expansion belongs to Authum's placeholder
-service: the module asks it to resolve a source template and passes the
-resulting path to the HTTP service. The Authum bridge handles module lifecycle
-and game-thread log flushing. There is no socket, HTTP parser
-or OS clock implementation in FastDL.
+Authum HTTP options. The config file itself is read through Authum's file
+facade (`<authum/file.h>`), so the module names no OS call. Placeholder
+expansion belongs to Authum's placeholder service: the module asks it to
+resolve a source template and passes the resulting path to the HTTP service.
+The Authum bridge handles module lifecycle and game-thread log flushing.
+There is no socket, HTTP parser or OS clock implementation in FastDL.
 
 The reusable constructor and component map are documented in
 [Authum HTTP API](lib/authum/docs/http.md). Application state uses Authum types;

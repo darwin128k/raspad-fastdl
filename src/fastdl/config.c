@@ -1,10 +1,21 @@
 #include <fastdl/config.h>
+#include <authum/file.h>
 #include <ctype.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* The config is read whole, then walked line by line. */
+#define FASTDL_CONFIG_CAPACITY 65536
+
+typedef enum fastdl_config_read_result
+{
+    fastdl_config_read_ok,
+    fastdl_config_read_open_failed,
+    fastdl_config_read_failed
+} fastdl_config_read_result_t;
 
 typedef enum fastdl_setting_kind
 {
@@ -132,26 +143,62 @@ apply_setting(fastdl_config_t *config, const authum_char_t *name, const authum_c
     return authum_bool_false;
 }
 
+/* Read the whole config through the Authum file facade: it reads bytes, not lines. */
+static fastdl_config_read_result_t
+fastdl_config_read(const authum_char_t *path, authum_char_t *text, authum_usize_t capacity,
+                   authum_usize_t *size)
+{
+    authum_file_t file;
+    authum_usize_t total = 0;
+
+    authum_file_init(&file);
+    if (!authum_file_open_cstr(&file, path, authum_file_mode_read))
+    {
+        return fastdl_config_read_open_failed;
+    }
+    if (!authum_file_read_all(&file, text, capacity, &total))
+    {
+        authum_file_close(&file);
+        return fastdl_config_read_failed;
+    }
+    authum_file_close(&file);
+    *size = total;
+    return fastdl_config_read_ok;
+}
+
 authum_bool_t
 fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_char_t *error,
                    authum_usize_t error_size)
 {
-    FILE *file = fopen(path, "r");
-    if (!file)
-    {
-        snprintf(error, error_size, "cannot open config '%s': %s", path, strerror(errno));
-        return authum_bool_false;
-    }
-
+    authum_char_t text[FASTDL_CONFIG_CAPACITY + 1];
+    authum_usize_t size = 0;
+    authum_usize_t offset = 0;
     authum_usize_t line_number = 0;
-    authum_char_t line[8192];
-    while (fgets(line, sizeof line, file))
+
+    switch (fastdl_config_read(path, text, FASTDL_CONFIG_CAPACITY, &size))
     {
+    case fastdl_config_read_open_failed:
+        snprintf(error, error_size, "cannot open config '%s'", path);
+        return authum_bool_false;
+    case fastdl_config_read_failed:
+        snprintf(error, error_size, "config '%s' does not fit in %u bytes", path,
+                 (unsigned)FASTDL_CONFIG_CAPACITY);
+        return authum_bool_false;
+    case fastdl_config_read_ok:
+        break;
+    }
+    text[size] = 0;
+    while (offset < size)
+    {
+        authum_char_t *line = text + offset;
+        authum_usize_t length = 0;
         ++line_number;
-        if (!strchr(line, '\n') && !feof(file))
+        while (offset + length < size && line[length] != '\n')
         {
-            goto invalid;
+            ++length;
         }
+        line[length] = 0;
+        offset += length + 1;
         authum_char_t *name = trim(line);
         if (!*name || *name == '#' || *name == ';')
         {
@@ -168,11 +215,6 @@ fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_ch
             goto invalid;
         }
     }
-    if (ferror(file))
-    {
-        goto invalid;
-    }
-    fclose(file);
     if (!*config->allow_extensions)
     {
         snprintf(error, error_size, "config '%s': allow_extensions cannot be empty", path);
@@ -187,6 +229,5 @@ fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_ch
 
 invalid:
     snprintf(error, error_size, "config '%s': invalid setting at line %u", path, line_number);
-    fclose(file);
     return authum_bool_false;
 }

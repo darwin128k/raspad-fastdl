@@ -133,16 +133,12 @@ main(int argc, char **argv)
     {
         return 1;
     }
-    authum_env_t env = {.size = sizeof env,
-                        .game = &game_dir,
-                        .module = &path,
-                        .module_config = &config_dir,
-                        .module_data = &data_dir};
-    authum_events_ops_t event_ops = {
-        .size = sizeof event_ops, .subscribe = subscribe, .unsubscribe = unsubscribe};
+    authum_env_t env = {
+        .game = &game_dir, .module = &path, .module_config = &config_dir, .module_data = &data_dir};
+    authum_events_ops_t event_ops = {.subscribe = subscribe, .unsubscribe = unsubscribe};
     authum_events_t events = {.ops = &event_ops};
     owning_thread = pthread_self();
-    authum_logger_ops_t logger_ops = {.size = sizeof logger_ops, .write = record_line};
+    authum_logger_ops_t logger_ops = {.write = record_line};
     authum_logger_channel_t logger = {.ops = &logger_ops};
     authum_thread_owner_t owner;
     authum_threads_t thread_api;
@@ -151,18 +147,13 @@ main(int argc, char **argv)
     authum_placeholder_owner_t placeholder_owner;
     authum_placeholder_service_t placeholder_service;
     authum_placeholder_host_init_env(&placeholder_owner, &env, &placeholder_service);
-    authum_host_t host = {.size = sizeof host,
-                          .env = &env,
+    authum_host_t host = {.env = &env,
                           .events = &events,
                           .logger = &logger,
                           .threads = &thread_api,
                           .http = &http_service,
                           .clock = authum_clock_host(),
                           .placeholders = &placeholder_service};
-    if (getenv("FASTDL_TEST_OLD_HOST"))
-    {
-        host.size = (authum_usize_t)((char *)&host.threads - (char *)&host);
-    }
     int expected = atoi(argv[3]);
     char cfg_path[4096], error[256], cwd[4096], after[4096];
     if (snprintf(cfg_path, sizeof cfg_path, "%s/configs/fastdl.cfg", argv[2]) >=
@@ -195,7 +186,7 @@ main(int argc, char **argv)
     for (int i = 0; i < 20; i++)
     {
         authum_threads_host_init(&owner, &thread_api);
-        authum_http_host_init(&http_owner, &thread_api, &http_service);
+        authum_http_host_init(&http_owner, &http_service);
         int started = api->start(&host) != 0;
         if (started != expected)
         {

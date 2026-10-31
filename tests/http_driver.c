@@ -94,7 +94,7 @@ main(int argc, char **argv)
     authum_threads_host_init(&owner, &threads);
     authum_http_owner_t http_owner;
     authum_http_service_t service;
-    authum_http_host_init(&http_owner, &threads, &service);
+    authum_http_host_init(&http_owner, &service);
     /* The same placeholder service the host binds: standard names of the
      * module being served. */
     char data_text[4096];

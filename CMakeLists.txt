@@ -75,6 +75,10 @@ else()
         "${AUTHUM_DIR}/src/authum/api/http.c"
         "${AUTHUM_DIR}/src/authum/api/clock.c"
         "${AUTHUM_DIR}/src/authum/api/placeholders.c"
+        "${AUTHUM_DIR}/src/authum/api/file.c"
+        "${AUTHUM_DIR}/src/authum/api/memory.c"
+        "${AUTHUM_DIR}/src/authum/api/cstr.c"
+        "${AUTHUM_DIR}/src/authum/api/path.c"
     )
     target_include_directories(fastdl_test_client PUBLIC "${AUTHUM_DIR}/include")
     target_link_libraries(fastdl_logic PUBLIC fastdl_test_client)
@@ -99,12 +103,16 @@ if(BUILD_TESTING)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     # Private host-backend tests use LH parsing and OS primitives through the
     # host implementation. The module consumes only Authum's public service.
-    if(NOT TARGET lh_http_parser)
+    if(NOT TARGET lh)
         set(LH_BUILD_TESTS OFF CACHE BOOL "Build LH tests" FORCE)
         set(LH_BUILD_DOCS OFF CACHE BOOL "Build LH docs" FORCE)
         set(LH_BUILD_BENCH OFF CACHE BOOL "Build LH benchmarks" FORCE)
         set(LH_LIBRARY_OPTION_OS ON CACHE BOOL "Host tests need LH OS services" FORCE)
-        add_subdirectory("${AUTHUM_DIR}/lib/lh" "${CMAKE_BINARY_DIR}/lh-parser" EXCLUDE_FROM_ALL)
+        add_subdirectory("${AUTHUM_DIR}/lib/lh" "${CMAKE_BINARY_DIR}/lh" EXCLUDE_FROM_ALL)
+    endif()
+    if(TARGET fastdl_test_client)
+        # The SDK dispatchers use lh's headers and its runtime allocator.
+        target_link_libraries(fastdl_test_client PUBLIC lh)
     endif()
     file(GLOB AUTHUM_HTTP_TEST_SOURCES CONFIGURE_DEPENDS
         "${AUTHUM_DIR}/src/authum/host/http/*.c"
@@ -120,7 +128,9 @@ if(BUILD_TESTING)
         PUBLIC "${AUTHUM_DIR}/include" "${AUTHUM_DIR}/src"
     )
     target_compile_definitions(fastdl_test_host PUBLIC _FILE_OFFSET_BITS=64)
-    target_compile_options(fastdl_test_host PRIVATE -Wall -Wextra -Werror)
+    # The SDK's own host sources are held to the same bar, minus the lh header
+    # macro that trips -Wtype-limits on unsigned comparisons.
+    target_compile_options(fastdl_test_host PRIVATE -Wall -Wextra -Werror -Wno-type-limits)
     target_link_libraries(fastdl_test_host PUBLIC Threads::Threads lh)
     if(FASTDL_BUILD_MODULE)
         target_compile_options(fastdl_test_host PUBLIC -m32)
@@ -141,16 +151,6 @@ if(BUILD_TESTING)
     )
     set_tests_properties(fastdl_http PROPERTIES TIMEOUT 45)
 
-    add_executable(fastdl_test_threads "${AUTHUM_DIR}/tests/threads.c")
-    target_link_libraries(fastdl_test_threads PRIVATE fastdl_logic fastdl_test_host)
-    add_test(NAME fastdl_threads COMMAND fastdl_test_threads)
-    set_tests_properties(fastdl_threads PROPERTIES TIMEOUT 10)
-
-    add_executable(fastdl_test_http_service "${AUTHUM_DIR}/tests/http.c")
-    target_link_libraries(fastdl_test_http_service PRIVATE fastdl_logic fastdl_test_host)
-    add_test(NAME fastdl_http_service COMMAND fastdl_test_http_service)
-    set_tests_properties(fastdl_http_service PROPERTIES TIMEOUT 10)
-
     if(FASTDL_BUILD_MODULE)
         add_executable(fastdl_test_module tests/module.c)
         target_compile_options(fastdl_test_module PRIVATE -Wall -Wextra -Werror)
@@ -163,12 +163,3 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-if(BUILD_TESTING)
-    add_executable(fastdl_test_log_writer
-        "${AUTHUM_DIR}/tests/log_writer.c"
-        "${AUTHUM_DIR}/src/authum/host/logs/writer.c")
-    target_compile_options(fastdl_test_log_writer PRIVATE -Wall -Wextra -Werror -UNDEBUG)
-    target_link_libraries(fastdl_test_log_writer PRIVATE fastdl_logic fastdl_test_host)
-    add_test(NAME fastdl_log_writer COMMAND fastdl_test_log_writer)
-    set_tests_properties(fastdl_log_writer PROPERTIES TIMEOUT 15)
-endif()

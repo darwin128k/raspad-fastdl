@@ -18,7 +18,6 @@ with tempfile.TemporaryDirectory(prefix='fastdl-module-') as tmp:
     (base/'data'/'public'/'maps'/'large.bsp').write_bytes(b'x'*4000000)
     # Reuse the now-free port and exercise 20 cycles in one loaded DSO.
     subprocess.run([runner,module,str(base),'1'],check=True,timeout=10)
-    subprocess.run([runner,module,str(base),'0'],env={**os.environ,'FASTDL_TEST_OLD_HOST':'1'},check=True,timeout=10)
     with cfg.open('a') as f:
         f.write(f'cpu = {min(os.sched_getaffinity(0))}\n')
     subprocess.run([runner,module,str(base),'1'],check=True,timeout=10)

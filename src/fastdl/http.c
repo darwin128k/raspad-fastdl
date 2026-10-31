@@ -53,12 +53,12 @@ fastdl_http_start(const fastdl_config_t *config, const authum_http_service_t *se
                   const authum_placeholder_service_t *placeholders, authum_char_t *error,
                   authum_usize_t error_size)
 {
-    if (!service || !service->ops || !AUTHUM_ABI_HAS(service->ops, open))
+    if (!service || !service->ops || !service->ops->open)
     {
         snprintf(error, error_size, "host has no HTTP service; update Authum");
         return NULL;
     }
-    if (!placeholders || !placeholders->ops || !AUTHUM_ABI_HAS(placeholders->ops, expand))
+    if (!placeholders || !placeholders->ops || !placeholders->ops->expand)
     {
         snprintf(error, error_size, "host has no placeholder service; update Authum");
         return NULL;
@@ -106,7 +106,7 @@ fastdl_http_shutdown(fastdl_http_t *http)
 authum_usize_t
 fastdl_http_memory_usage(const fastdl_http_t *http)
 {
-    return http ? authum_http_memory_usage(&http->service, http->server) + sizeof *http : 0;
+    return http ? authum_http_get_memory_usage(&http->service, http->server) + sizeof *http : 0;
 }
 
 authum_usize_t

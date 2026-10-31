@@ -18,22 +18,11 @@ args = parser.parse_args()
 if not args.formatter:
     raise SystemExit('Install clang-format 18.1.8 or pass --formatter PATH')
 root = Path(__file__).resolve().parents[1]
-authum = root / 'lib/authum'
 files = list((root / 'src').rglob('*.c'))
 files += list((root / 'include').rglob('*.h'))
 files += list((root / 'tests').glob('*.c'))
-files += list((authum / 'src/authum/host/http').glob('*.[ch]'))
-files += list((authum / 'src/authum/host/logs').glob('*.[ch]'))
-for name in ['http', 'clock', 'thread', 'placeholders']:
-    files += [authum / f'include/authum/{name}.h', authum / f'src/authum/api/{name}.c']
-files += [authum / name for name in [
-    'src/authum/host/http.h', 'src/authum/host/http_windows.c',
-    'src/authum/host/clock.h', 'src/authum/host/clock.c',
-    'src/authum/host/threads.h', 'src/authum/host/threads.c',
-    'src/authum/host/placeholders.h', 'src/authum/host/placeholders.c',
-    'tests/http.c', 'tests/threads.c', 'tests/logs.c', 'tests/log_writer.c',
-    'tests/placeholders.c',
-    'src/authum/host/logs.c', 'src/authum/host/logs.h']]
+# The SDK's own sources are formatted by the SDK: its .clang-format needs a
+# newer clang-format than the one this project pins, so they are not checked here.
 subprocess.run([args.formatter, '--dry-run', '--Werror', '-style=file',
                 *map(str, sorted(set(files)))], check=True)
 print(f'Formatting OK: {len(set(files))} files')

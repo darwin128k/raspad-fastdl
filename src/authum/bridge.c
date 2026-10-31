@@ -28,7 +28,7 @@ access_frame(const authum_char_t *name, authum_ptr payload, authum_ptr user)
     (void)name;
     (void)payload;
     (void)user;
-    authum_i64_t second = authum_clock_monotonic_ms(authum_host_clock(&g_host)) / 1000;
+    authum_i64_t second = authum_clock_get_monotonic_ms(authum_host_get_clock(&g_host)) / 1000;
     if (second != g_log_second)
     {
         g_log_second = second;
@@ -44,7 +44,7 @@ fastdl_authum_stop(void)
 {
     if (g_log_subscribed)
     {
-        authum_events_unsubscribe(authum_host_events(&g_host), AUTHUM_EVENT_SERVER_FRAME,
+        authum_events_unsubscribe(authum_host_get_events(&g_host), AUTHUM_EVENT_SERVER_FRAME,
                                   access_frame, NULL);
         g_log_subscribed = 0;
     }
@@ -65,13 +65,13 @@ fastdl_authum_start(authum_host_t *host)
     }
     authum_host_copy(&g_host, host);
     authum_logger_init(&g_log, &g_host);
-    const authum_placeholder_service_t *placeholders = authum_host_placeholders(&g_host);
-    if (!placeholders || !placeholders->ops || !AUTHUM_ABI_HAS(placeholders->ops, expand))
+    const authum_placeholder_service_t *placeholders = authum_host_get_placeholders(&g_host);
+    if (!placeholders || !placeholders->ops || !placeholders->ops->expand)
     {
         authum_logger_error(&g_log, "host has no placeholder service; update Authum");
         goto failed;
     }
-    const authum_path_t *config_dir = authum_host_env_module_config(&g_host);
+    const authum_path_t *config_dir = authum_host_get_module_config_path(&g_host);
     authum_path_t config_path;
     authum_char_t error[512];
     if (!config_dir || !authum_path_join(&config_path, config_dir, "fastdl.cfg"))
@@ -81,13 +81,13 @@ fastdl_authum_start(authum_host_t *host)
     }
     fastdl_config_t cfg;
     fastdl_config_defaults(&cfg);
-    if (!fastdl_config_load(&cfg, authum_path_as_cstr(&config_path), error, sizeof error))
+    if (!fastdl_config_load(&cfg, authum_path_get_cstr(&config_path), error, sizeof error))
     {
         authum_logger_error(&g_log, "%s", error);
         goto failed;
     }
     authum_logger_info(&g_log, "config='%s', sources=%u, listen=%s:%d",
-                       authum_path_as_cstr(&config_path), cfg.source_count, cfg.bind, cfg.port);
+                       authum_path_get_cstr(&config_path), cfg.source_count, cfg.bind, cfg.port);
     for (authum_usize_t i = 0; i < cfg.source_count; i++)
     {
         authum_char_t expanded[AUTHUM_HTTP_PATH_CAPACITY];
@@ -99,7 +99,8 @@ fastdl_authum_start(authum_host_t *host)
         }
         authum_logger_info(&g_log, "source[%u]='%s'", i + 1, expanded);
     }
-    g_http = fastdl_http_start(&cfg, authum_host_http(&g_host), placeholders, error, sizeof error);
+    g_http =
+        fastdl_http_start(&cfg, authum_host_get_http(&g_host), placeholders, error, sizeof error);
     if (!g_http)
     {
         authum_logger_error(&g_log, "HTTP startup: %s", error);
@@ -116,9 +117,9 @@ fastdl_authum_start(authum_host_t *host)
         g_log_second = 0;
         g_log_budget = 100;
     }
-    authum_logger_info(&g_log, "ready %s:%d, Authum worker (cpu=%d), clients=%d, buffers=%lu bytes",
+    authum_logger_info(&g_log, "ready %s:%d, Authum worker (cpu=%d), clients=%d, buffers=%u bytes",
                        cfg.bind, cfg.port, cfg.cpu, cfg.max_clients,
-                       (unsigned long)fastdl_http_memory_usage(g_http));
+                       (authum_u32_t)fastdl_http_memory_usage(g_http));
     return authum_bool_true;
 failed:
     authum_logger_error(&g_log, "FastDL startup failed");
