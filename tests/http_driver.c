@@ -5,6 +5,7 @@
 #include <authum/host/threads.h>
 #include <authum/host/http.h>
 #include <authum/host/placeholders.h>
+#include <authum/host/http/internal.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,19 @@ on_signal(int n)
 {
     (void)n;
     stopped = 1;
+}
+
+/* Test-only: a worker that is stuck in a file call when the stop comes,
+ * as with a source on a network drive that stopped answering. */
+static unsigned stall_ms;
+
+static void
+stall_on_stop(authum_http_server_t *server)
+{
+    if (server->loop && lh_exec_loop_is_stopping(server->loop))
+    {
+        fastdl_sleep_ms(stall_ms);
+    }
 }
 
 static void
@@ -101,6 +115,15 @@ main(int argc, char **argv)
         fastdl_socket_stop();
         return 1;
     }
+    for (authum_usize_t i = 0; i < cfg.warning_count; i++)
+    {
+        fprintf(stderr, "warning: %s\n", cfg.warnings[i]);
+    }
+    if (getenv("FASTDL_TEST_STALL_STOP_MS"))
+    {
+        stall_ms = (unsigned)strtoul(getenv("FASTDL_TEST_STALL_STOP_MS"), NULL, 10);
+        authum_http_test_step_hook = stall_on_stop;
+    }
     signal(SIGTERM, on_signal);
     signal(SIGINT, on_signal);
 #if defined(_WIN32)
@@ -114,6 +137,10 @@ main(int argc, char **argv)
     authum_http_owner_t http_owner;
     authum_http_service_t service;
     authum_http_host_init(&http_owner, &service);
+    /* Heap tag, freed as soon as the owner is gone: a worker that outlives
+     * the stop must not read it (the sanitizers would catch that). */
+    char *tag = strdup("fastdl");
+    http_owner.tag = tag;
     /* The same placeholder service the host binds: standard names of the
      * module being served. */
     char data_text[4096];
@@ -181,11 +208,31 @@ main(int argc, char **argv)
             fastdl_sleep_ms(50);
         }
     }
+    const authum_i64_t stop_start = authum_http_now_ms();
     fastdl_http_shutdown(http);
+    fprintf(stderr, "stop_ms=%ld\n", (long)(authum_http_now_ms() - stop_start));
     fastdl_http_drain_logs(http, access_line, NULL, 257);
+    if (getenv("FASTDL_TEST_DROP_DELAY_MS"))
+    {
+        /* Let a stalled worker finish before the owner lets go (then the
+         * owner frees the server instead of the worker). */
+        fastdl_sleep_ms((unsigned)strtoul(getenv("FASTDL_TEST_DROP_DELAY_MS"), NULL, 10));
+    }
     fastdl_http_stop(http);
     authum_placeholder_host_drop_owner(&placeholder_owner);
     authum_http_host_drop_owner(&http_owner);
+    free(tag);
+    /* As the host does each frame: join detached workers once they are done. */
+    const authum_i64_t reap_start = authum_http_now_ms();
+    authum_usize_t detached = authum_http_host_reap();
+    fprintf(stderr, "detached=%u\n", (unsigned)detached);
+    while (detached && authum_http_now_ms() - reap_start < (authum_i64_t)stall_ms + 5000)
+    {
+        fastdl_sleep_ms(1);
+        detached = authum_http_host_reap();
+    }
+    fprintf(stderr, "reaped_after_ms=%ld left=%u\n", (long)(authum_http_now_ms() - reap_start),
+            (unsigned)detached);
     authum_threads_host_drop_owner(&owner);
     if (control_socket != FASTDL_SOCKET_INVALID)
     {

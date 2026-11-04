@@ -44,6 +44,9 @@ static const fastdl_setting_t settings[] = {
     {"allow_extensions", fastdl_setting_text, FASTDL_FIELD(fastdl_config_t, allow_extensions), 512,
      0, 0},
     {"deny_prefixes", fastdl_setting_text, FASTDL_FIELD(fastdl_config_t, deny_prefixes), 512, 0, 0},
+    {"trusted_proxy", fastdl_setting_text, FASTDL_FIELD(fastdl_config_t, trusted_proxy), 512, 0, 0},
+    {"per_ip_pending", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, per_ip_pending), 0, 1,
+     64},
     {"port", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, port), 0, 1, 65535},
     {"max_clients", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, max_clients), 0, 1, 256},
     {"per_ip", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, per_ip), 0, 1, 64},
@@ -52,7 +55,7 @@ static const fastdl_setting_t settings[] = {
     {"timeout_seconds", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, timeout_seconds), 0,
      1, 120},
     {"cpu", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, cpu), 0, -1, 1023},
-    {"access_log", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, access_log), 0, 0, 1},
+    {"access_log", fastdl_setting_integer, FASTDL_FIELD(fastdl_config_t, access_log), 0, 0, 2},
     {"bytes_per_second", fastdl_setting_bytes, FASTDL_FIELD(fastdl_config_t, bytes_per_second), 0,
      1024, 1073741824},
     {"max_file_bytes", fastdl_setting_bytes, FASTDL_FIELD(fastdl_config_t, max_file_bytes), 0, 1,
@@ -76,7 +79,19 @@ fastdl_config_defaults(fastdl_config_t *config)
     config->cpu = -1;
     config->bytes_per_second = 8 * 1024 * 1024;
     config->access_log = 1;
+    config->per_ip_pending = 4;
     config->max_file_bytes = 128 * 1024 * 1024;
+}
+
+static void
+warn(fastdl_config_t *config, const authum_char_t *text, const authum_char_t *path,
+     authum_usize_t line, const authum_char_t *name)
+{
+    if (config->warning_count < FASTDL_CONFIG_MAX_WARNINGS)
+    {
+        authum_cstr_format(config->warnings[config->warning_count++], sizeof config->warnings[0],
+                           "config '%s' line %u: %s '%s'", path, (authum_u32_t)line, text, name);
+    }
 }
 
 static authum_char_t *
@@ -120,6 +135,43 @@ apply_number(const fastdl_setting_t *setting, authum_byte_t *destination,
     }
     *(authum_i32_t *)destination = number;
     return authum_bool_true;
+}
+
+/* Extensions are written without the dot; a leading one is dropped. Case does
+ * not matter: the server compares extensions without case. */
+static authum_bool_t
+normalise_extensions(authum_char_t *list)
+{
+    authum_bool_t changed = authum_bool_false;
+    authum_char_t *out = list;
+    authum_bool_t token_start = authum_bool_true;
+    for (const authum_char_t *in = list; *in; ++in)
+    {
+        if (token_start && *in == '.')
+        {
+            changed = authum_bool_true;
+            continue;
+        }
+        token_start = authum_char_is_space(*in) ? authum_bool_true : authum_bool_false;
+        *out++ = *in;
+    }
+    *out = 0;
+    return changed;
+}
+
+/* Which setting names were seen: a second line for the same name wins, but is
+ * reported, since it usually means an edit landed in the wrong place. */
+static authum_u32_t
+setting_bit(const authum_char_t *name)
+{
+    for (authum_usize_t index = 0; index < sizeof settings / sizeof settings[0]; ++index)
+    {
+        if (authum_cstr_is_equal(settings[index].name, name, authum_bool_false))
+        {
+            return 1u << index;
+        }
+    }
+    return 0;
 }
 
 static authum_bool_t
@@ -203,6 +255,13 @@ fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_ch
     text[size] = 0;
     authum_usize_t offset = 0;
     authum_usize_t line_number = 0;
+    authum_u32_t seen = 0;
+    /* Editors on Windows may save UTF-8 with a byte order mark. */
+    if (size >= 3 && (authum_byte_t)text[0] == 0xEF && (authum_byte_t)text[1] == 0xBB &&
+        (authum_byte_t)text[2] == 0xBF)
+    {
+        offset = 3;
+    }
     while (offset < size)
     {
         authum_char_t *line = text + offset;
@@ -225,10 +284,27 @@ fastdl_config_load(fastdl_config_t *config, const authum_char_t *path, authum_ch
             goto invalid;
         }
         *value++ = 0;
-        if (!apply_setting(config, trim(name), trim(value)))
+        name = trim(name);
+        const authum_u32_t bit = setting_bit(name);
+        if (bit & seen)
+        {
+            warn(config, "repeated setting, the last one wins:", path, line_number, name);
+        }
+        seen |= bit;
+        if (!apply_setting(config, name, trim(value)))
         {
             goto invalid;
         }
+    }
+    if (normalise_extensions(config->allow_extensions))
+    {
+        warn(config, "allow_extensions are written without a dot; read as", path, line_number,
+             config->allow_extensions);
+    }
+    if (config->source_count && (seen & setting_bit("root")))
+    {
+        warn(config, "root is ignored because source lines are set; root was", path, line_number,
+             config->root);
     }
     if (!*config->allow_extensions)
     {

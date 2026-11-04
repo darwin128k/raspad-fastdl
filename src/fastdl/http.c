@@ -27,7 +27,10 @@ build_options(const fastdl_config_t *config, const authum_placeholder_service_t 
     options->requests_per_second = config->requests_per_second;
     options->timeout_seconds = config->timeout_seconds;
     options->cpu = config->cpu;
-    options->access_log = config->access_log ? authum_bool_true : authum_bool_false;
+    options->access_log = config->access_log;
+    options->per_ip_pending = config->per_ip_pending;
+    authum_memory_copy(options->trusted_proxies, config->trusted_proxy,
+                       sizeof options->trusted_proxies);
     options->bytes_per_second = config->bytes_per_second;
     options->max_file_bytes = config->max_file_bytes;
 

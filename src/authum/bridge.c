@@ -82,6 +82,10 @@ fastdl_authum_start(authum_host_t *host)
         authum_logger_error(&g_log, "%s", error);
         goto failed;
     }
+    for (authum_usize_t i = 0; i < cfg.warning_count; i++)
+    {
+        authum_logger_warning(&g_log, "%s", cfg.warnings[i]);
+    }
     authum_logger_info(&g_log, "config='%s', sources=%u, listen=%s:%d",
                        authum_path_get_cstr(&config_path), cfg.source_count, cfg.bind, cfg.port);
     for (authum_usize_t i = 0; i < cfg.source_count; i++)

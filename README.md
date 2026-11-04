@@ -30,7 +30,16 @@ allow_extensions = bsp mdl wav mp3 spr tga bmp txt res wad
 Repeat `source` for up to 16 resource trees. A request for `/maps/example.bsp`
 looks for `maps/example.bsp` inside each tree; the first available allowed file
 wins. Every configured source must exist and be readable, or startup fails.
-Comment out optional sources until their directories exist.
+Comment out optional sources until their directories exist. Keep sources on a
+local disk: a file call on a network share that stops answering stalls the
+HTTP worker; on unload the game thread waits at most one second for it and
+then leaves it to finish (logging `event=stop_timeout`); when the call
+returns, the worker closes the port, frees its memory and exits, and Authum
+joins the thread on a later frame without waiting.
+
+Config warnings (logged at startup): a repeated key (the last one wins), a
+`root` ignored because `source` lines are set, extensions written with a dot.
+A UTF-8 byte order mark is accepted.
 
 Placeholders come from Authum, not from this module: `{game}` is the actual
 game directory, `{module}` is this module directory, `{data}` is its data
@@ -44,9 +53,15 @@ also means `{game}`. Source entries take precedence.
 `allow_dirs` controls the first URL directory and `allow_extensions` controls
 file extensions. `deny_prefixes` excludes full paths or directory subtrees.
 These rules apply to every source. Root-level files are WAD-only. No directory
-listings, uploads, executable extensions by default, hidden components, URL
-escapes or symlink traversal. Resource names must use ASCII letters, digits,
-underscore, hyphen, dots, dollar signs and slashes. Names and extensions are case-sensitive.
+listings, uploads, executable extensions by default, hidden components or
+symlink traversal. The request target is %-decoded exactly once; `?query` and
+`#fragment` are ignored. After decoding, an encoded `/` or NUL, `\`, control
+characters, `: * ? " < > |`, empty components, names starting with `.`, names
+ending in `.` or space, and 8.3 short names (`NAME~1`) are refused.
+`allow_dirs`, `allow_extensions` and `deny_prefixes` compare without case on
+every platform; whether the file name must match case is up to the filesystem
+(exact on Linux, case-insensitive on Windows). Extensions are written without
+a dot; a leading dot is dropped with a warning.
 Publication is trusted administration: do not expose private data through hard
 links or bind mounts, and keep the allowed trees restricted to game resources.
 
@@ -80,7 +95,10 @@ FastDL 0.5 requires the shared HTTP/clock/placeholder API in Authum 4.0.0
 (ABI 3.0). Update
 `addons/authum/authum.so` together with fastdl.so while HLDS is stopped. The
 module ABI 3.0 breaks compatibility with 2.x: an older host refuses this
-module, and an older module is refused by the new host.
+module, and an older module is refused by the new host. Within 3.0 the HTTP
+options carry their own size, so an Authum with this change still serves a
+fastdl.so built before it (with the previous defaults for the newer
+settings); a fastdl.so with this change needs the updated authum.so.
 
 ## Build and package
 
@@ -122,7 +140,10 @@ directory handles: the module never changes the process working directory.
 Up to 256 clients; buffers are allocated for the configured max_clients only
 (default 64: about 0.84 MiB of HTTP state, excluding thread stack, kernel buffers
 and allocator overhead, versus about 2.51 MiB at 256). 8 KiB request buffers, 64 headers, per-IP connection
-and attempt budgets, header/idle timeouts, five-minute maximum lifetime, file
+and attempt budgets, at most per_ip_pending (default 4) unfinished requests per address,
+eviction of the oldest unfinished request (older than 250 ms) when every slot
+is taken, a 5 s header timeout, idle timeout, a minimum average rate of 4 KiB/s
+after five minutes instead of a fixed lifetime, file
 size cap, and global response-byte bandwidth budget with up to 100 ms burst.
 Access logging is enabled by default (access_log=1). sendfile is used; cold disk I/O can delay the
 worker. Range requests receive a complete representation.
@@ -130,8 +151,9 @@ worker. Range requests receive a complete representation.
 Authum's HTTP service owns the worker: it runs an LH loop and joins it when the
 module closes the service. FastDL then frees its state
 or unloading code. Clients, sources, pipe and listener are closed. No forced
-thread cancellation or unsafe unload timeout is used. Shutdown normally wakes
-immediately, but a slow/stalled filesystem operation can delay join. The worker
+thread cancellation is used. Shutdown normally wakes the worker immediately;
+the game thread waits at most one second. A worker stuck in a stalled
+filesystem call is left to finish on its own (see sources above). The worker
 shares HLDS memory: an HTTP memory bug can crash the game. No child-process
 sandbox or process-crash isolation is provided.
 
@@ -164,7 +186,25 @@ Access records go through Authum at info level into
 Console visibility is controlled separately by Authum's `log_console` setting.
 Existing FastDL configs also default to access_log=1; set access_log=0 to disable.
 
-Events: connect, request, complete, disconnect, timeout, shutdown, reject_limit.
+`access_log = 1` writes one line per finished connection (complete, disconnect,
+timeout, evicted, shutdown); refused requests carry `reason=` (for example
+not_found, ext_not_allowed, dir_not_allowed, denied_prefix, hidden_or_dot,
+bad_encoding, bad_char, uri_too_long, header_too_large, body_framing,
+rate_limited). Lines for refusals, timeouts and empty connections are limited
+to 20 per second; connections refused before a slot was given (rate/per-IP
+limit, per_ip_pending, no free slot) and the lines over the budget are counted
+in one `event=refused_summary` line per second. `access_log = 2` also writes
+connect and request lines (debugging; under load these overflow the queue).
+
+Behind a reverse proxy set `trusted_proxy` to its addresses or CIDR blocks.
+Only a connection from such a peer has its client taken from `X-Forwarded-For`
+(the rightmost hop that is not itself trusted; a malformed entry stops the
+walk). Per-IP limits then apply to that client and the line carries `via=`.
+Without `trusted_proxy` the header is ignored.
+
+Requests: an over-long target gets 414, an over-long header block 431,
+`Content-Length: 0` is accepted on GET/HEAD, any other body framing is 400.
+Startup errors name the OS error (`... (os error 98)`).
 Every connection has an id, peer IP/port, method/path, response status, actual
 body bytes handed to the socket, source index (1-based, matching startup logs),
 and duration in milliseconds. HEAD transfers zero body bytes. A complete
@@ -175,7 +215,7 @@ The HTTP client provides an IP address, not a trustworthy SteamID or player name
 A fixed 256-record single-producer/single-consumer queue separates the worker
 from Authum's logger. Normal flushing is limited to 8 lines/frame and 100
 lines/second. Excess records are dropped with a log_overflow summary so a flood
-cannot grow memory without bounds. Unload joins the worker and flushes up to
+cannot grow memory without bounds. Unload stops the worker and flushes up to
 257 final lines. Request strings are sanitized and truncated to prevent log
 injection. During a map load without frames, log flushing waits for frames or
 unload. No disk/host logging occurs in the HTTP worker.
