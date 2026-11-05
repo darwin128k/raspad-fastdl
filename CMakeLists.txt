@@ -93,7 +93,12 @@ else()
         "${AUTHUM_DIR}/src/authum/api/memory.c"
         "${AUTHUM_DIR}/src/authum/api/cstr.c"
         "${AUTHUM_DIR}/src/authum/api/path.c"
+        "${AUTHUM_DIR}/src/authum/api/runtime.c"
     )
+    # As in Authum's own client: LH's runtime slots start empty, and runtime.c's
+    # load-time constructor fills them. Nothing calls it, so keep the linker
+    # from dropping it out of the static library.
+    target_link_options(fastdl_test_client INTERFACE "LINKER:--undefined=authum_runtime_install")
     target_include_directories(fastdl_test_client PUBLIC "${AUTHUM_DIR}/include")
     target_link_libraries(fastdl_logic PUBLIC fastdl_test_client)
 endif()

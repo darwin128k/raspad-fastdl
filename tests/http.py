@@ -103,7 +103,9 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
         else:
             deadline=time.monotonic()+5
             while True:
-                if proc.poll() is not None: raise AssertionError(log_text(proc))
+                if proc.poll() is not None:
+                    raise AssertionError(f'driver exited with {proc.returncode}: '
+                                         f'{log_text(proc) or "(stderr empty)"}')
                 try:
                     with socket.create_connection(('127.0.0.1',port),timeout=.1): break
                 except OSError:
