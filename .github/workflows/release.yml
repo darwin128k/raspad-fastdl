@@ -27,6 +27,12 @@ jobs:
           submodules: recursive
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
+      # The notes script and CHANGELOG come from the workflow's own ref: an old
+      # tag built by hand may predate them.
+      - uses: actions/checkout@v4
+        with:
+          path: meta
+
       - name: Install i386 toolchain
         run: |
           sudo apt-get update
@@ -73,7 +79,7 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.name }}"
           NOTES=$(mktemp)
-          python3 scripts/release_notes.py --tag "$TAG" \
+          python3 meta/scripts/release_notes.py --tag "$TAG" --changelog meta/CHANGELOG.md \
             --package "Download **\`fastdl-linux32-authum.zip\`** (Linux) or **\`fastdl-win32-authum.zip\`** (Windows) and unpack → \`addons/authum/modules/fastdl/\` (needs Authum)." \
             --highlight "Authum module: an HTTP server inside HLDS for \`sv_downloadurl\`" \
             --highlight "Serves only the directories and extensions you allow; no listings, no uploads" \
