@@ -26,7 +26,7 @@ static unsigned stall_ms;
 static void
 stall_on_stop(authum_http_server_t *server)
 {
-    if (server->loop && lh_exec_loop_is_stopping(server->loop))
+    if (server->loop && lh_rail_loop_is_stopping(server->loop))
     {
         fastdl_sleep_ms(stall_ms);
     }
