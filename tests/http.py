@@ -415,7 +415,11 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
     with socket.socket() as s:
         s.bind(('127.0.0.1',0)); quirk_port=s.getsockname()[1]
     good.write_bytes(b'\xef\xbb\xbfport = 1\n'+f'port = {quirk_port}\nroot = {root}\nsource = {{game}}\nallow_extensions = .bsp wad\n'.encode())
-    q=subprocess.Popen([binary,'--config',str(good),'--base',str(base),'--game-dir',str(root)],stderr=subprocess.PIPE,stdout=subprocess.DEVNULL)
+    # Its own process group on Windows, as for every driver: stop() sends it a
+    # console break, which without a group reaches every process of the console
+    # (ctest and the CI runner included).
+    q=subprocess.Popen([binary,'--config',str(good),'--base',str(base),'--game-dir',str(root)],stderr=subprocess.PIPE,stdout=subprocess.DEVNULL,
+                       **({'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {}))
     try:
         deadline=time.monotonic()+5
         while True:

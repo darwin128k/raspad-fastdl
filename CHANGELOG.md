@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows: another process could bind FastDL's port next to it and take the
+  connections — Authum's HTTP listener set `SO_REUSEADDR`. `lib/authum` moves
+  to `1ddebd0`, whose listener owns its port (`SO_EXCLUSIVEADDRUSE`); for
+  0.5.0 the same fix ships as Authum 4.0.1 (replace `authum.dll`).
+- The HTTP test started its config-quirks driver without a process group of
+  its own on Windows, so stopping it sent a console break to every process of
+  the console, ctest and the CI runner included.
 - The sanitizer test build links Authum's runtime, which fills lh's runtime
   slots; without it the HTTP driver died on its first allocation. The HTTP
   test also reports the driver's exit code and stderr when it exits early.
