@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.5.0)'
+        required: true
+        type: string
+      ref:
+        description: 'Git ref to build (the tag itself, e.g. v0.5.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Authum module zip
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Install i386 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-multilib g++-multilib libc6-dev-i386 ninja-build cmake zip
+
+      - name: Build
+        run: |
+          cmake -S . -B build-linux32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-linux32 --target fastdl -j"$(nproc)"
+
+      - name: Pack Authum module layout
+        run: |
+          rm -rf dist-ci
+          cmake --install build-linux32 --component fastdl --prefix dist-ci
+          printf 'fastdl\n' > dist-ci/addons/authum/modules.list.example
+          cat > dist-ci/addons/authum/modules/fastdl/INSTALL.txt <<'EOF'
+          Unpack into the game dir so paths match Authum:
+
+            addons/authum/modules/fastdl/fastdl.so
+            addons/authum/modules/fastdl/configs/fastdl.cfg
+
+          Ensure Authum is installed, then add a line to addons/authum/configs/modules.list:
+            fastdl
+
+          Then in server.cfg: sv_allowdownload 1 and
+          sv_downloadurl "http://YOUR_PUBLIC_IP:17015/"; open TCP 17015.
+          EOF
+          sed -i 's/^          //' dist-ci/addons/authum/modules/fastdl/INSTALL.txt
+          (cd dist-ci && zip -r ../fastdl-linux32-authum.zip addons)
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          NOTES=$(mktemp)
+          python3 scripts/release_notes.py --tag "$TAG" \
+            --package "Download **\`fastdl-linux32-authum.zip\`** (Linux) or **\`fastdl-win32-authum.zip\`** (Windows) and unpack → \`addons/authum/modules/fastdl/\` (needs Authum)." \
+            --highlight "Authum module: an HTTP server inside HLDS for \`sv_downloadurl\`" \
+            --highlight "Serves only the directories and extensions you allow; no listings, no uploads" \
+            --highlight "Add \`fastdl\` to \`addons/authum/configs/modules.list\`" \
+            > "$NOTES"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES"
+          else
+            gh release edit "$TAG" --notes-file "$NOTES"
+          fi
+          gh release upload "$TAG" fastdl-linux32-authum.zip --clobber
+
+  win32:
+    name: Build and publish the Windows zip
+    # The Linux job creates the release; this one adds its zip to it.
+    needs: release
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Install MSYS2 MINGW32
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            zip
+
+      - name: Build
+        run: |
+          cmake -S . -B build-win32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-win32 --target fastdl -j"$(nproc)"
+
+      - name: Pack Authum module layout
+        run: |
+          rm -rf dist-win
+          cmake --install build-win32 --component fastdl --prefix dist-win
+          printf 'fastdl\n' > dist-win/addons/authum/modules.list.example
+          cat > dist-win/addons/authum/modules/fastdl/INSTALL.txt <<'EOF'
+          Unpack into the game dir so paths match Authum:
+
+            addons\authum\modules\fastdl\fastdl.dll
+            addons\authum\modules\fastdl\configs\fastdl.cfg
+
+          Ensure Authum is installed, then add a line to addons\authum\configs\modules.list:
+            fastdl
+
+          Then in server.cfg: sv_allowdownload 1 and
+          sv_downloadurl "http://YOUR_PUBLIC_IP:17015/"; open TCP 17015.
+          EOF
+          sed -i 's/^          //' dist-win/addons/authum/modules/fastdl/INSTALL.txt
+          (cd dist-win && zip -r ../fastdl-win32-authum.zip addons)
+
+      - name: Upload to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          gh release upload $tag fastdl-win32-authum.zip --clobber

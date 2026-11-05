@@ -1,4 +1,38 @@
-# raspad-fastdl
+<p align="center">
+  <img src="assets/logo.png" alt="fastdl" width="260">
+</p>
+
+<h1 align="center">fastdl</h1>
+
+<p align="center">
+  <b>Authum module</b> for classic HLDS<br>
+  Fast downloads straight from the game server — no web server, no helper process.
+</p>
+
+<p align="center">
+  <a href="LICENSE">Apache-2.0</a> ·
+  <a href="https://github.com/darwin128k/raspad-fastdl">GitHub</a> ·
+  <a href="https://github.com/darwin128k/raspad-authum">Authum</a>
+</p>
+
+---
+
+## Why install it
+
+Without a download URL, players pull maps, models and sounds through the
+game's own channel, a few kilobytes a second. `sv_downloadurl` fixes that, but
+usually means running and securing a separate web server next to HLDS.
+
+fastdl is that server, inside HLDS:
+
+- an HTTP server on a thread Authum manages — nothing else to install, start
+  or keep alive;
+- serves only what you allow: chosen directories and extensions, no listings,
+  no uploads, no paths outside the game's resource trees;
+- several resource trees in one URL space (`{game}`, `{data}/public`, ...);
+- Linux and Windows builds in every release.
+
+## What it is
 
 GoldSrc FastDL for Authum (GameDLL host, no Metamod). The 32-bit module
 contains an HTTP server running on an Authum-managed thread inside HLDS. No helper

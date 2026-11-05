@@ -1,4 +1,4 @@
-name: Linux
+name: CI
 on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
@@ -34,3 +34,37 @@ jobs:
         with:
           name: fastdl-linux
           path: dist/linux32/
+
+  windows:
+    name: Windows i686 (MSYS2 MinGW)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install MSYS2 MINGW32
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            zip
+
+      - name: Build and tests
+        run: |
+          cmake -S . -B build-win32 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-win32 -j"$(nproc)"
+          ctest --test-dir build-win32 --output-on-failure
+          cmake --install build-win32 --component fastdl --prefix "$PWD/dist/win32"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastdl-win32
+          path: dist/win32/
