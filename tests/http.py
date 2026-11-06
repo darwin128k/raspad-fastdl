@@ -316,7 +316,9 @@ with tempfile.TemporaryDirectory(prefix='fastdl-test-') as tmp:
         stop(proc)
     lines=log_text(proc).splitlines()
     summary=[line for line in lines if 'event=refused_summary' in line]
-    assert summary and any('per_ip_pending=5 ' in line for line in summary),summary
+    # The five refusals may straddle a second, and so two summary lines.
+    pending=sum(int(re.search(r'per_ip_pending=(\d+) ',line).group(1)) for line in summary)
+    assert summary and pending==5,summary
     assert any('unlogged_refusals=' in line and 'unlogged_refusals=0 ' not in line for line in summary),summary
     assert len([line for line in lines if 'missing.bsp' in line])<=40
     # With every slot taken by unfinished requests, the oldest one makes room.
